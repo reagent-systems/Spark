@@ -30,22 +30,23 @@ fun ChatBubble(
         }
         
         Card(
-            modifier = Modifier.widthIn(max = 280.dp),
+            modifier = Modifier.widthIn(max = 300.dp),
             shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (message.isUser) 16.dp else 4.dp,
-                bottomEnd = if (message.isUser) 4.dp else 16.dp
+                topStart = 18.dp,
+                topEnd = 18.dp,
+                bottomStart = if (message.isUser) 18.dp else 6.dp,
+                bottomEnd = if (message.isUser) 6.dp else 18.dp
             ),
             colors = CardDefaults.cardColors(
                 containerColor = if (message.isUser) 
                     MaterialTheme.colorScheme.primary 
                 else 
                     MaterialTheme.colorScheme.surfaceVariant
-            )
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
             Column(
-                modifier = Modifier.padding(12.dp)
+                modifier = Modifier.padding(16.dp)
             ) {
                 if (!message.isUser) {
                     Text(

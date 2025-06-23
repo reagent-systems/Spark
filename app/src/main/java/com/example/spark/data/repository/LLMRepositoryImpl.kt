@@ -79,21 +79,21 @@ class LLMRepositoryImpl(
         return availableModels.toList()
     }
     
-    override suspend fun loadModel(modelId: String): Result<Unit> {
+    override suspend fun loadModel(modelId: String): Result<Unit> = withContext(Dispatchers.IO) {
         Log.d(TAG, "Starting to load model: $modelId")
-        return try {
+        return@withContext try {
             modelMutex.withLock {
                 val model = availableModels.find { it.id == modelId }
                 if (model == null) {
                     Log.e(TAG, "Model not found: $modelId")
-                    return Result.failure(Exception("Model not found"))
+                    return@withLock Result.failure(Exception("Model not found"))
                 }
                 
                 Log.d(TAG, "Found model: ${model.name} at path: ${model.filePath}")
                 
                 if (loadedModels.containsKey(modelId)) {
                     Log.d(TAG, "Model already loaded: $modelId")
-                    return Result.success(Unit)
+                    return@withLock Result.success(Unit)
                 }
                 
                 // Get the actual file path for MediaPipe
@@ -108,7 +108,8 @@ class LLMRepositoryImpl(
                     .setMaxTopK(model.topK)
                     .build()
                 
-                Log.d(TAG, "Creating LlmInference from options...")
+                Log.d(TAG, "Creating LlmInference from options (this may take a while)...")
+                // This is the heavy operation that was blocking the UI
                 val llmInference = LlmInference.createFromOptions(context, options)
                 loadedModels[modelId] = llmInference
                 
@@ -127,14 +128,14 @@ class LLMRepositoryImpl(
         }
     }
     
-    override suspend fun unloadModel(modelId: String): Result<Unit> {
+    override suspend fun unloadModel(modelId: String): Result<Unit> = withContext(Dispatchers.IO) {
         Log.d(TAG, "Starting to unload model: $modelId")
-        return try {
+        return@withContext try {
             modelMutex.withLock {
                 val model = availableModels.find { it.id == modelId }
                 if (model == null) {
                     Log.e(TAG, "Model not found for unloading: $modelId")
-                    return Result.failure(Exception("Model not found"))
+                    return@withLock Result.failure(Exception("Model not found"))
                 }
                 
                 Log.d(TAG, "Unloading model: ${model.name}")
@@ -304,6 +305,7 @@ class LLMRepositoryImpl(
                     updatedAt = System.currentTimeMillis()
                 )
                 chatSessions[index] = updatedSession
+                savePersistedChatSessions() // Save to persistence
                 Result.success(Unit)
             } else {
                 Result.failure(Exception("Chat session not found"))
@@ -316,6 +318,7 @@ class LLMRepositoryImpl(
     override suspend fun deleteChatSession(sessionId: String): Result<Unit> {
         return try {
             chatSessions.removeIf { it.id == sessionId }
+            savePersistedChatSessions() // Save to persistence
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -533,6 +536,33 @@ class LLMRepositoryImpl(
             Log.d(TAG, "Saved ${availableModels.size} models to persistence")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save persisted models", e)
+        }
+    }
+    
+    private fun loadPersistedChatSessions() {
+        try {
+            val chatSessionsFile = File(context.filesDir, "chat_sessions.json")
+            if (chatSessionsFile.exists()) {
+                Log.d(TAG, "Loading persisted chat sessions from: ${chatSessionsFile.absolutePath}")
+                val jsonString = chatSessionsFile.readText()
+                val sessions = json.decodeFromString<List<ChatSession>>(jsonString)
+                chatSessions.clear()
+                chatSessions.addAll(sessions)
+                Log.d(TAG, "Loaded ${chatSessions.size} persisted chat sessions")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load persisted chat sessions", e)
+        }
+    }
+    
+    private fun savePersistedChatSessions() {
+        try {
+            val chatSessionsFile = File(context.filesDir, "chat_sessions.json")
+            val jsonString = json.encodeToString(chatSessions.toList())
+            chatSessionsFile.writeText(jsonString)
+            Log.d(TAG, "Saved ${chatSessions.size} chat sessions to persistence")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save persisted chat sessions", e)
         }
     }
 } 

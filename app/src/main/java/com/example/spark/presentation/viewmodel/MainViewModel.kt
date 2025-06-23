@@ -22,6 +22,7 @@ data class MainUiState(
     val serverLocalIp: String = "",
     val isLoading: Boolean = false,
     val loadingModelId: String? = null,
+    val loadingModelName: String? = null,
     val downloadingModelId: String? = null,
     val downloadProgress: Float = 0f,
     val errorMessage: String? = null,
@@ -74,8 +75,19 @@ class MainViewModel(
     
     fun loadModel(modelId: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(loadingModelId = modelId) }
+            // Find the model name
+            val model = _uiState.value.availableModels.find { it.id == modelId }
+            val modelName = model?.name ?: "Unknown Model"
+            
+            _uiState.update { 
+                it.copy(
+                    loadingModelId = modelId,
+                    loadingModelName = modelName
+                )
+            }
+            
             try {
+                // Use a separate coroutine for the actual loading to avoid blocking the UI
                 val result = llmRepository.loadModel(modelId)
                 result.fold(
                     onSuccess = {
@@ -85,7 +97,8 @@ class MainViewModel(
                             it.copy(
                                 availableModels = availableModels,
                                 loadedModels = loadedModels,
-                                loadingModelId = null
+                                loadingModelId = null,
+                                loadingModelName = null
                             )
                         }
                     },
@@ -93,6 +106,7 @@ class MainViewModel(
                         _uiState.update {
                             it.copy(
                                 loadingModelId = null,
+                                loadingModelName = null,
                                 errorMessage = "Failed to load model: ${error.message}"
                             )
                         }
@@ -102,6 +116,7 @@ class MainViewModel(
                 _uiState.update {
                     it.copy(
                         loadingModelId = null,
+                        loadingModelName = null,
                         errorMessage = "Error loading model: ${e.message}"
                     )
                 }
@@ -111,7 +126,17 @@ class MainViewModel(
     
     fun unloadModel(modelId: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(loadingModelId = modelId) }
+            // Find the model name
+            val model = _uiState.value.availableModels.find { it.id == modelId }
+            val modelName = model?.name ?: "Unknown Model"
+            
+            _uiState.update { 
+                it.copy(
+                    loadingModelId = modelId,
+                    loadingModelName = modelName
+                )
+            }
+            
             try {
                 val result = llmRepository.unloadModel(modelId)
                 result.fold(
@@ -122,7 +147,8 @@ class MainViewModel(
                             it.copy(
                                 availableModels = availableModels,
                                 loadedModels = loadedModels,
-                                loadingModelId = null
+                                loadingModelId = null,
+                                loadingModelName = null
                             )
                         }
                     },
@@ -130,6 +156,7 @@ class MainViewModel(
                         _uiState.update {
                             it.copy(
                                 loadingModelId = null,
+                                loadingModelName = null,
                                 errorMessage = "Failed to unload model: ${error.message}"
                             )
                         }
@@ -139,6 +166,7 @@ class MainViewModel(
                 _uiState.update {
                     it.copy(
                         loadingModelId = null,
+                        loadingModelName = null,
                         errorMessage = "Error unloading model: ${e.message}"
                     )
                 }
@@ -230,6 +258,9 @@ class MainViewModel(
                         currentChatSession = session
                     )
                 }
+                
+                // Automatically ensure the correct model is loaded for the new chat
+                ensureCorrectModelLoaded(modelId)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(errorMessage = "Failed to create chat session: ${e.message}")
@@ -245,10 +276,117 @@ class MainViewModel(
                 _uiState.update {
                     it.copy(currentChatSession = session)
                 }
+                
+                // Automatically ensure the correct model is loaded for this chat
+                session?.let { ensureCorrectModelLoaded(it.modelId) }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(errorMessage = "Failed to select chat session: ${e.message}")
                 }
+            }
+        }
+    }
+    
+    private suspend fun ensureCorrectModelLoaded(requiredModelId: String) {
+        try {
+            val currentLoadedModels = llmRepository.getLoadedModels()
+            val isRequiredModelLoaded = currentLoadedModels.any { it.id == requiredModelId }
+            
+            // If the required model is already loaded, we're good
+            if (isRequiredModelLoaded) {
+                return
+            }
+            
+            // Check if the required model exists in available models
+            val availableModels = llmRepository.getAvailableModels()
+            val requiredModel = availableModels.find { it.id == requiredModelId }
+            if (requiredModel == null) {
+                _uiState.update {
+                    it.copy(errorMessage = "Required model not found: $requiredModelId")
+                }
+                return
+            }
+            
+            // If there are other models loaded, unload them first to free memory
+            if (currentLoadedModels.isNotEmpty()) {
+                for (loadedModel in currentLoadedModels) {
+                    if (loadedModel.id != requiredModelId) {
+                        // Find the model name for loading dialog
+                        val modelName = loadedModel.name
+                        _uiState.update { 
+                            it.copy(
+                                loadingModelId = loadedModel.id,
+                                loadingModelName = "Unloading $modelName"
+                            )
+                        }
+                        
+                        val unloadResult = llmRepository.unloadModel(loadedModel.id)
+                        unloadResult.fold(
+                            onSuccess = {
+                                // Update UI state after successful unload
+                                val updatedLoadedModels = llmRepository.getLoadedModels()
+                                val updatedAvailableModels = llmRepository.getAvailableModels()
+                                _uiState.update {
+                                    it.copy(
+                                        availableModels = updatedAvailableModels,
+                                        loadedModels = updatedLoadedModels
+                                    )
+                                }
+                            },
+                            onFailure = { error ->
+                                _uiState.update {
+                                    it.copy(
+                                        loadingModelId = null,
+                                        loadingModelName = null,
+                                        errorMessage = "Failed to unload model ${loadedModel.name}: ${error.message}"
+                                    )
+                                }
+                                return
+                            }
+                        )
+                    }
+                }
+            }
+            
+            // Now load the required model
+            _uiState.update { 
+                it.copy(
+                    loadingModelId = requiredModelId,
+                    loadingModelName = requiredModel.name
+                )
+            }
+            
+            val loadResult = llmRepository.loadModel(requiredModelId)
+            loadResult.fold(
+                onSuccess = {
+                    val updatedLoadedModels = llmRepository.getLoadedModels()
+                    val updatedAvailableModels = llmRepository.getAvailableModels()
+                    _uiState.update {
+                        it.copy(
+                            availableModels = updatedAvailableModels,
+                            loadedModels = updatedLoadedModels,
+                            loadingModelId = null,
+                            loadingModelName = null
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _uiState.update {
+                        it.copy(
+                            loadingModelId = null,
+                            loadingModelName = null,
+                            errorMessage = "Failed to load model ${requiredModel.name}: ${error.message}"
+                        )
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(
+                    loadingModelId = null,
+                    loadingModelName = null,
+                    errorMessage = "Failed to manage model loading: ${e.message}"
+                )
             }
         }
     }
@@ -260,6 +398,9 @@ class MainViewModel(
             _uiState.update { it.copy(isGenerating = true) }
             
             try {
+                // Ensure the correct model is loaded before sending message
+                ensureCorrectModelLoaded(currentSession.modelId)
+                
                 // Add user message
                 val userMessage = ChatMessage(
                     id = UUID.randomUUID().toString(),
@@ -270,6 +411,15 @@ class MainViewModel(
                 )
                 
                 llmRepository.addMessageToSession(currentSession.id, userMessage)
+                
+                // Refresh the UI to show the user message immediately
+                val updatedSession = llmRepository.getChatSession(currentSession.id)
+                _uiState.update {
+                    it.copy(
+                        currentChatSession = updatedSession,
+                        currentMessage = "" // Clear the input field
+                    )
+                }
                 
                 // Generate AI response
                 val config = ModelConfig() // Use default config for now
@@ -429,6 +579,35 @@ class MainViewModel(
                         loadingModelId = null,
                         errorMessage = "Error deleting model: ${e.message}"
                     )
+                }
+            }
+        }
+    }
+    
+    fun deleteChatSession(sessionId: String) {
+        viewModelScope.launch {
+            try {
+                val result = llmRepository.deleteChatSession(sessionId)
+                result.fold(
+                    onSuccess = {
+                        val sessions = llmRepository.getChatSessions()
+                        _uiState.update {
+                            it.copy(
+                                chatSessions = sessions,
+                                // Clear current session if it was deleted
+                                currentChatSession = if (it.currentChatSession?.id == sessionId) null else it.currentChatSession
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        _uiState.update {
+                            it.copy(errorMessage = "Failed to delete chat session: ${error.message}")
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(errorMessage = "Error deleting chat session: ${e.message}")
                 }
             }
         }

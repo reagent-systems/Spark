@@ -22,6 +22,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.spark.data.repository.LLMRepositoryImpl
 import com.example.spark.network.server.ApiServer
 import com.example.spark.presentation.ui.screens.*
+import com.example.spark.presentation.ui.components.ModelLoadingDialog
 import com.example.spark.presentation.viewmodel.MainViewModel
 import com.example.spark.ui.theme.SparkTheme
 
@@ -103,6 +104,11 @@ fun SparkApp(viewModel: MainViewModel) {
             }
         }
     ) { innerPadding ->
+        // Model Loading Dialog
+        ModelLoadingDialog(
+            modelName = uiState.loadingModelName ?: "",
+            isVisible = uiState.loadingModelId != null
+        )
         NavHost(
             navController = navController,
             startDestination = "models",
@@ -129,12 +135,15 @@ fun SparkApp(viewModel: MainViewModel) {
                     chatSessions = uiState.chatSessions,
                     currentChatSession = uiState.currentChatSession,
                     loadedModels = uiState.loadedModels,
+                    availableModels = uiState.availableModels,
                     currentMessage = uiState.currentMessage,
                     isGenerating = uiState.isGenerating,
                     onCreateChatSession = viewModel::createChatSession,
                     onSelectChatSession = viewModel::selectChatSession,
                     onSendMessage = viewModel::sendMessage,
-                    onUpdateCurrentMessage = viewModel::updateCurrentMessage
+                    onUpdateCurrentMessage = viewModel::updateCurrentMessage,
+                    onLoadModel = viewModel::loadModel,
+                    onDeleteChatSession = viewModel::deleteChatSession
                 )
             }
             
