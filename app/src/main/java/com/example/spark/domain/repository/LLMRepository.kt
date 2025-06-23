@@ -1,0 +1,34 @@
+package com.example.spark.domain.repository
+
+import com.example.spark.domain.models.LLMModel
+import com.example.spark.domain.models.ChatMessage
+import com.example.spark.domain.models.ChatSession
+import com.example.spark.domain.models.ModelConfig
+import kotlinx.coroutines.flow.Flow
+
+interface LLMRepository {
+    suspend fun getAvailableModels(): List<LLMModel>
+    suspend fun loadModel(modelId: String): Result<Unit>
+    suspend fun unloadModel(modelId: String): Result<Unit>
+    suspend fun generateResponse(
+        modelId: String, 
+        prompt: String, 
+        config: ModelConfig
+    ): Flow<String>
+    suspend fun generateResponseSync(
+        modelId: String, 
+        prompt: String, 
+        config: ModelConfig
+    ): Result<String>
+    suspend fun addModel(filePath: String, name: String, description: String): Result<LLMModel>
+    suspend fun removeModel(modelId: String): Result<Unit>
+    suspend fun getLoadedModels(): List<LLMModel>
+    suspend fun isModelLoaded(modelId: String): Boolean
+    
+    // Chat session management
+    suspend fun createChatSession(name: String, modelId: String): ChatSession
+    suspend fun getChatSessions(): List<ChatSession>
+    suspend fun getChatSession(sessionId: String): ChatSession?
+    suspend fun addMessageToSession(sessionId: String, message: ChatMessage): Result<Unit>
+    suspend fun deleteChatSession(sessionId: String): Result<Unit>
+} 
