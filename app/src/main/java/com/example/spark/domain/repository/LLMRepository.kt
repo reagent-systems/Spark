@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.Flow
 
 interface LLMRepository {
     suspend fun getAvailableModels(): List<LLMModel>
-    suspend fun loadModel(modelId: String): Result<Unit>
+    suspend fun loadModel(modelId: String, config: ModelConfig = ModelConfig()): Result<Unit>
     suspend fun unloadModel(modelId: String): Result<Unit>
     suspend fun generateResponse(
         modelId: String, 
@@ -30,6 +30,7 @@ interface LLMRepository {
     suspend fun getChatSessions(): List<ChatSession>
     suspend fun getChatSession(sessionId: String): ChatSession?
     suspend fun addMessageToSession(sessionId: String, message: ChatMessage): Result<Unit>
+    suspend fun updateChatSession(session: ChatSession): Result<Unit>
     suspend fun deleteChatSession(sessionId: String): Result<Unit>
     
     // Model downloading

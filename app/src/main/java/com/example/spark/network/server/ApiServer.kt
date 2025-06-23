@@ -28,6 +28,14 @@ class ApiServer(
 ) {
     private var server: NettyApplicationEngine? = null
     private val scope = CoroutineScope(Dispatchers.IO)
+    private var defaultModelConfig: ModelConfig = ModelConfig()
+    
+    fun updateDefaultModelConfig(config: ModelConfig) {
+        defaultModelConfig = config
+        Log.d("ApiServer", "Updated default model config: $config")
+    }
+    
+    fun getDefaultModelConfig(): ModelConfig = defaultModelConfig
     
     fun start() {
         scope.launch {
@@ -99,10 +107,14 @@ class ApiServer(
                                 // Build prompt from messages
                                 val prompt = buildPromptFromMessages(request.messages)
                                 
+                                // Use request parameters, but if they're at default values, 
+                                // prefer the server's configured defaults
                                 val config = ModelConfig(
-                                    maxTokens = request.max_tokens,
-                                    temperature = request.temperature,
-                                    topK = request.top_k
+                                    maxTokens = if (request.max_tokens == 1000) defaultModelConfig.maxTokens else request.max_tokens,
+                                    temperature = if (request.temperature == 0.8f) defaultModelConfig.temperature else request.temperature,
+                                    topK = if (request.top_k == 40) defaultModelConfig.topK else request.top_k,
+                                    randomSeed = defaultModelConfig.randomSeed,
+                                    useGpu = defaultModelConfig.useGpu
                                 )
                                 
                                 val result = llmRepository.generateResponseSync(
@@ -210,6 +222,33 @@ class ApiServer(
                                 call.respond(
                                     HttpStatusCode.InternalServerError,
                                     ErrorResponse(ErrorDetail("Internal server error", "server_error"))
+                                )
+                            }
+                        }
+                        
+                        // Model configuration endpoints
+                        get("/spark/config") {
+                            try {
+                                call.respond(defaultModelConfig)
+                            } catch (e: Exception) {
+                                Log.e("ApiServer", "Error getting model config", e)
+                                call.respond(
+                                    HttpStatusCode.InternalServerError,
+                                    ErrorResponse(ErrorDetail("Internal server error", "server_error"))
+                                )
+                            }
+                        }
+                        
+                        post("/spark/config") {
+                            try {
+                                val newConfig = call.receive<ModelConfig>()
+                                updateDefaultModelConfig(newConfig)
+                                call.respond(mapOf("status" to "updated", "config" to newConfig))
+                            } catch (e: Exception) {
+                                Log.e("ApiServer", "Error updating model config", e)
+                                call.respond(
+                                    HttpStatusCode.BadRequest,
+                                    ErrorResponse(ErrorDetail("Invalid config format", "bad_request"))
                                 )
                             }
                         }

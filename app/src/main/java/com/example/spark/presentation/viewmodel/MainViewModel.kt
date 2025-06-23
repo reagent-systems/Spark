@@ -9,6 +9,11 @@ import com.example.spark.utils.NetworkUtils
 import com.example.spark.utils.ModelCatalog
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import android.content.Context
+import java.io.File
 import java.util.*
 
 data class MainUiState(
@@ -27,19 +32,27 @@ data class MainUiState(
     val downloadProgress: Float = 0f,
     val errorMessage: String? = null,
     val currentMessage: String = "",
-    val isGenerating: Boolean = false
+    val isGenerating: Boolean = false,
+    val modelConfig: ModelConfig = ModelConfig()
 )
 
 class MainViewModel(
     private val llmRepository: LLMRepository,
-    private val apiServer: ApiServer
+    private val apiServer: ApiServer,
+    private val context: Context
 ) : ViewModel() {
+    
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
     
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
     
     init {
         loadInitialData()
+        loadModelConfig()
     }
     
     private fun loadInitialData() {
@@ -88,7 +101,7 @@ class MainViewModel(
             
             try {
                 // Use a separate coroutine for the actual loading to avoid blocking the UI
-                val result = llmRepository.loadModel(modelId)
+                val result = llmRepository.loadModel(modelId, _uiState.value.modelConfig)
                 result.fold(
                     onSuccess = {
                         val loadedModels = llmRepository.getLoadedModels()
@@ -356,7 +369,7 @@ class MainViewModel(
                 )
             }
             
-            val loadResult = llmRepository.loadModel(requiredModelId)
+            val loadResult = llmRepository.loadModel(requiredModelId, _uiState.value.modelConfig)
             loadResult.fold(
                 onSuccess = {
                     val updatedLoadedModels = llmRepository.getLoadedModels()
@@ -391,10 +404,13 @@ class MainViewModel(
         }
     }
     
+    private var generationJob: Job? = null
+    
     fun sendMessage(content: String) {
         val currentSession = _uiState.value.currentChatSession ?: return
         
-        viewModelScope.launch {
+        generationJob?.cancel() // Cancel any existing generation
+        generationJob = viewModelScope.launch {
             _uiState.update { it.copy(isGenerating = true) }
             
             try {
@@ -421,57 +437,126 @@ class MainViewModel(
                     )
                 }
                 
-                // Generate AI response
-                val config = ModelConfig() // Use default config for now
-                val result = llmRepository.generateResponseSync(
+                // Generate AI response using current config
+                val config = _uiState.value.modelConfig
+                val response = llmRepository.generateResponse(
                     currentSession.modelId,
                     content,
                     config
+                ).first() // Get the complete response
+                
+                // Create AI message with complete response
+                val aiMessage = ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    content = response,
+                    isUser = false,
+                    timestamp = System.currentTimeMillis(),
+                    modelId = currentSession.modelId
                 )
                 
-                result.fold(
-                    onSuccess = { response ->
-                        val aiMessage = ChatMessage(
-                            id = UUID.randomUUID().toString(),
-                            content = response,
-                            isUser = false,
-                            timestamp = System.currentTimeMillis(),
-                            modelId = currentSession.modelId
-                        )
-                        
-                        llmRepository.addMessageToSession(currentSession.id, aiMessage)
-                        
-                        // Refresh current session
-                        val updatedSession = llmRepository.getChatSession(currentSession.id)
-                        _uiState.update {
-                            it.copy(
-                                currentChatSession = updatedSession,
-                                isGenerating = false
-                            )
-                        }
-                    },
-                    onFailure = { error ->
-                        _uiState.update {
-                            it.copy(
-                                isGenerating = false,
-                                errorMessage = "Failed to generate response: ${error.message}"
-                            )
-                        }
-                    }
-                )
+                llmRepository.addMessageToSession(currentSession.id, aiMessage)
+                
+                // Update UI with the complete response
+                val finalSession = llmRepository.getChatSession(currentSession.id)
+                _uiState.update {
+                    it.copy(currentChatSession = finalSession)
+                }
+                
+                // Mark generation as complete
+                _uiState.update {
+                    it.copy(isGenerating = false)
+                }
+                
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         isGenerating = false,
-                        errorMessage = "Error sending message: ${e.message}"
+                        errorMessage = if (e is kotlinx.coroutines.CancellationException) {
+                            null // Don't show error for user cancellation
+                        } else {
+                            "Error sending message: ${e.message}"
+                        }
                     )
                 }
+            } finally {
+                generationJob = null
             }
         }
     }
     
+    fun stopGeneration() {
+        generationJob?.cancel()
+        generationJob = null
+        _uiState.update {
+            it.copy(isGenerating = false)
+        }
+    }
+    
+
+    
     fun updateCurrentMessage(message: String) {
         _uiState.update { it.copy(currentMessage = message) }
+    }
+    
+    fun updateModelConfig(newConfig: ModelConfig) {
+        _uiState.update { it.copy(modelConfig = newConfig) }
+        saveModelConfig(newConfig)
+        
+        // Update the API server's default config
+        apiServer.updateDefaultModelConfig(newConfig)
+        
+        // Check if GPU setting changed and reload models if necessary
+        val currentConfig = _uiState.value.modelConfig
+        if (currentConfig.useGpu != newConfig.useGpu) {
+            reloadModelsForGpuChange()
+        }
+    }
+    
+    private fun reloadModelsForGpuChange() {
+        viewModelScope.launch {
+            try {
+                val loadedModels = llmRepository.getLoadedModels()
+                if (loadedModels.isNotEmpty()) {
+                    // Show loading state
+                    _uiState.update { 
+                        it.copy(
+                            loadingModelId = "gpu_change",
+                            loadingModelName = "Reloading models for GPU change"
+                        )
+                    }
+                    
+                    // Unload all models first
+                    for (model in loadedModels) {
+                        llmRepository.unloadModel(model.id)
+                    }
+                    
+                    // Reload them with new GPU setting
+                    for (model in loadedModels) {
+                        llmRepository.loadModel(model.id, _uiState.value.modelConfig)
+                    }
+                    
+                    // Update UI state
+                    val updatedLoadedModels = llmRepository.getLoadedModels()
+                    val updatedAvailableModels = llmRepository.getAvailableModels()
+                    _uiState.update {
+                        it.copy(
+                            availableModels = updatedAvailableModels,
+                            loadedModels = updatedLoadedModels,
+                            loadingModelId = null,
+                            loadingModelName = null
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        loadingModelId = null,
+                        loadingModelName = null,
+                        errorMessage = "Failed to reload models for GPU change: ${e.message}"
+                    )
+                }
+            }
+        }
     }
     
     fun clearError() {
@@ -610,6 +695,38 @@ class MainViewModel(
                     it.copy(errorMessage = "Error deleting chat session: ${e.message}")
                 }
             }
+        }
+    }
+    
+    private fun loadModelConfig() {
+        try {
+            val configFile = File(context.filesDir, "model_config.json")
+            if (configFile.exists()) {
+                val configJson = configFile.readText()
+                val config = json.decodeFromString<ModelConfig>(configJson)
+                _uiState.update { it.copy(modelConfig = config) }
+                
+                // Initialize API server with the loaded config
+                apiServer.updateDefaultModelConfig(config)
+            } else {
+                // Initialize API server with default config
+                apiServer.updateDefaultModelConfig(ModelConfig())
+            }
+        } catch (e: Exception) {
+            // If loading fails, use default config
+            val defaultConfig = ModelConfig()
+            _uiState.update { it.copy(modelConfig = defaultConfig) }
+            apiServer.updateDefaultModelConfig(defaultConfig)
+        }
+    }
+    
+    private fun saveModelConfig(config: ModelConfig) {
+        try {
+            val configFile = File(context.filesDir, "model_config.json")
+            val jsonString = json.encodeToString(config)
+            configFile.writeText(jsonString)
+        } catch (e: Exception) {
+            // Handle save error silently
         }
     }
 } 

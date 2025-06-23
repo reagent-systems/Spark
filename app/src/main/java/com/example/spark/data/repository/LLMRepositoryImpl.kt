@@ -12,6 +12,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -79,7 +82,7 @@ class LLMRepositoryImpl(
         return availableModels.toList()
     }
     
-    override suspend fun loadModel(modelId: String): Result<Unit> = withContext(Dispatchers.IO) {
+    override suspend fun loadModel(modelId: String, config: ModelConfig): Result<Unit> = withContext(Dispatchers.IO) {
         Log.d(TAG, "Starting to load model: $modelId")
         return@withContext try {
             modelMutex.withLock {
@@ -167,10 +170,14 @@ class LLMRepositoryImpl(
             ?: throw Exception("Model not loaded")
         
         try {
-            // For now, we'll use the synchronous method and emit the complete response
-            // In a real implementation, you'd want to stream partial results
-            val result = llmInference.generateResponse(prompt)
-            emit(result)
+            // Get the complete response from MediaPipe
+            val result = withContext(Dispatchers.IO) {
+                llmInference.generateResponse(prompt)
+            }
+            
+            // Replace \n with actual newlines and emit the complete response
+            val formattedResult = result.replace("\n", "\n")
+            emit(formattedResult)
         } catch (e: Exception) {
             throw e
         }
@@ -305,6 +312,21 @@ class LLMRepositoryImpl(
                     updatedAt = System.currentTimeMillis()
                 )
                 chatSessions[index] = updatedSession
+                savePersistedChatSessions() // Save to persistence
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("Chat session not found"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+    
+    override suspend fun updateChatSession(session: ChatSession): Result<Unit> {
+        return try {
+            val index = chatSessions.indexOfFirst { it.id == session.id }
+            if (index != -1) {
+                chatSessions[index] = session
                 savePersistedChatSessions() // Save to persistence
                 Result.success(Unit)
             } else {

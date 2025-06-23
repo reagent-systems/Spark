@@ -36,7 +36,7 @@ class MainActivity : ComponentActivity() {
         // Initialize dependencies
         val llmRepository = LLMRepositoryImpl(this)
         val apiServer = ApiServer(this, llmRepository)
-        viewModel = MainViewModel(llmRepository, apiServer)
+        viewModel = MainViewModel(llmRepository, apiServer, this)
         
         setContent {
             SparkTheme {
@@ -138,12 +138,15 @@ fun SparkApp(viewModel: MainViewModel) {
                     availableModels = uiState.availableModels,
                     currentMessage = uiState.currentMessage,
                     isGenerating = uiState.isGenerating,
+                    modelConfig = uiState.modelConfig,
                     onCreateChatSession = viewModel::createChatSession,
                     onSelectChatSession = viewModel::selectChatSession,
                     onSendMessage = viewModel::sendMessage,
                     onUpdateCurrentMessage = viewModel::updateCurrentMessage,
                     onLoadModel = viewModel::loadModel,
-                    onDeleteChatSession = viewModel::deleteChatSession
+                    onDeleteChatSession = viewModel::deleteChatSession,
+                    onStopGeneration = viewModel::stopGeneration,
+                    onUpdateModelConfig = viewModel::updateModelConfig
                 )
             }
             
@@ -153,8 +156,10 @@ fun SparkApp(viewModel: MainViewModel) {
                     serverPort = uiState.serverPort,
                     serverLocalIp = uiState.serverLocalIp,
                     loadedModels = uiState.loadedModels,
+                    modelConfig = uiState.modelConfig,
                     onStartServer = viewModel::startServer,
-                    onStopServer = viewModel::stopServer
+                    onStopServer = viewModel::stopServer,
+                    onUpdateModelConfig = viewModel::updateModelConfig
                 )
             }
         }

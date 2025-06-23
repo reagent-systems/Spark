@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,6 +18,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.spark.domain.models.LLMModel
+import com.example.spark.domain.models.ModelConfig
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -25,8 +27,10 @@ fun ServerScreen(
     serverPort: Int,
     serverLocalIp: String = "",
     loadedModels: List<LLMModel>,
+    modelConfig: ModelConfig,
     onStartServer: () -> Unit,
     onStopServer: () -> Unit,
+    onUpdateModelConfig: (ModelConfig) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val clipboardManager = LocalClipboardManager.current
@@ -119,6 +123,101 @@ fun ServerScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(if (isServerRunning) "Stop Server" else "Start Server")
                 }
+            }
+        }
+        
+        // Model Configuration Card
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Card(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Server Model Configuration",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    var showConfigDialog by remember { mutableStateOf(false) }
+                    
+                    IconButton(onClick = { showConfigDialog = true }) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Configure Model Settings",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    
+                    if (showConfigDialog) {
+                        ServerModelConfigDialog(
+                            currentConfig = modelConfig,
+                            onDismiss = { showConfigDialog = false },
+                            onConfigUpdate = { newConfig ->
+                                onUpdateModelConfig(newConfig)
+                                showConfigDialog = false
+                            }
+                        )
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                // Current configuration display
+                Text(
+                    text = "Current Settings:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Temperature: ${modelConfig.temperature}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Max Tokens: ${modelConfig.maxTokens}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Top-K: ${modelConfig.topK}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Backend: ${if (modelConfig.useGpu) "GPU" else "CPU"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    text = "These settings will be used as defaults for API requests that don't specify their own parameters.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
             }
         }
         
@@ -228,6 +327,22 @@ fun ServerScreen(
                             clipboardManager.setText(AnnotatedString("$baseUrl/spark/models/{id}/unload"))
                         }
                     )
+                    
+                    EndpointItem(
+                        title = "Get Config",
+                        url = "GET /spark/config",
+                        onCopy = { 
+                            clipboardManager.setText(AnnotatedString("$baseUrl/spark/config"))
+                        }
+                    )
+                    
+                    EndpointItem(
+                        title = "Update Config",
+                        url = "POST /spark/config",
+                        onCopy = { 
+                            clipboardManager.setText(AnnotatedString("$baseUrl/spark/config"))
+                        }
+                    )
                 }
             }
             
@@ -286,6 +401,60 @@ fun ServerScreen(
                             IconButton(
                                 onClick = {
                                     clipboardManager.setText(AnnotatedString(curlExample))
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = "Copy",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text(
+                        text = "Model Configuration Examples:",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    val configExample = """
+                        # Get current server config
+                        curl $baseUrl/spark/config
+                        
+                        # Update server config
+                        curl -X POST $baseUrl/spark/config \
+                          -H "Content-Type: application/json" \
+                          -d '{
+                            "maxTokens": 1500,
+                            "temperature": 0.8,
+                            "topK": 40,
+                            "randomSeed": 0,
+                            "useGpu": ${modelConfig.useGpu}
+                          }'
+                    """.trimIndent()
+                    
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = configExample,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString(configExample))
                                 }
                             ) {
                                 Icon(
@@ -384,9 +553,7 @@ private fun EndpointItem(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
-            modifier = Modifier.weight(1f)
-        ) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium,
@@ -395,19 +562,212 @@ private fun EndpointItem(
             Text(
                 text = url,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontFamily = FontFamily.Monospace
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        IconButton(
-            onClick = onCopy,
-            modifier = Modifier.size(32.dp)
-        ) {
+        
+        IconButton(onClick = onCopy) {
             Icon(
                 Icons.Default.ContentCopy,
-                contentDescription = "Copy",
-                modifier = Modifier.size(16.dp)
+                contentDescription = "Copy URL",
+                tint = MaterialTheme.colorScheme.primary
             )
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ServerModelConfigDialog(
+    currentConfig: ModelConfig,
+    onDismiss: () -> Unit,
+    onConfigUpdate: (ModelConfig) -> Unit
+) {
+    var maxTokens by remember { mutableStateOf(currentConfig.maxTokens.toString()) }
+    var temperature by remember { mutableStateOf(currentConfig.temperature.toString()) }
+    var topK by remember { mutableStateOf(currentConfig.topK.toString()) }
+    var randomSeed by remember { mutableStateOf(currentConfig.randomSeed.toString()) }
+    var useGpu by remember { mutableStateOf(currentConfig.useGpu) }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Server Model Configuration")
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Max Tokens
+                OutlinedTextField(
+                    value = maxTokens,
+                    onValueChange = { maxTokens = it },
+                    label = { Text("Max Output Tokens") },
+                    supportingText = { Text("Maximum number of tokens to generate (100-4000)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                
+                // Temperature
+                OutlinedTextField(
+                    value = temperature,
+                    onValueChange = { temperature = it },
+                    label = { Text("Temperature") },
+                    supportingText = { Text("Creativity level (0.0-2.0). Higher = more creative") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                
+                // Top K
+                OutlinedTextField(
+                    value = topK,
+                    onValueChange = { topK = it },
+                    label = { Text("Top K") },
+                    supportingText = { Text("Consider top K tokens (1-100)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                
+                // Random Seed
+                OutlinedTextField(
+                    value = randomSeed,
+                    onValueChange = { randomSeed = it },
+                    label = { Text("Random Seed") },
+                    supportingText = { Text("Seed for reproducible results (0 = random)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                
+                // GPU/CPU Selection
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Switch(
+                        checked = useGpu,
+                        onCheckedChange = { useGpu = it },
+                        modifier = Modifier.padding(end = 12.dp)
+                    )
+                    Column {
+                        Text(
+                            text = if (useGpu) "GPU Acceleration" else "CPU Processing",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = if (useGpu) "Faster inference, higher battery usage (Experimental)" else "Slower inference, lower battery usage",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                
+                // Note about GPU settings requiring model reload
+                if (useGpu != currentConfig.useGpu) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Text(
+                                text = "⚠️ GPU Setting Changed",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = "Models will need to be reloaded when changing GPU/CPU settings.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                }
+                
+                // Quick preset buttons
+                Text(
+                    text = "Quick Presets:",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            maxTokens = "1000"
+                            temperature = "0.3"
+                            topK = "20"
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Precise", style = MaterialTheme.typography.bodySmall)
+                    }
+                    
+                    OutlinedButton(
+                        onClick = {
+                            maxTokens = "1500"
+                            temperature = "0.7"
+                            topK = "40"
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Balanced", style = MaterialTheme.typography.bodySmall)
+                    }
+                    
+                    OutlinedButton(
+                        onClick = {
+                            maxTokens = "2000"
+                            temperature = "1.2"
+                            topK = "60"
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Creative", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Text(
+                    text = "Note: These settings will be used as defaults for API requests that don't specify their own parameters.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    try {
+                        val newConfig = ModelConfig(
+                            maxTokens = maxTokens.toIntOrNull()?.coerceIn(100, 4000) ?: currentConfig.maxTokens,
+                            temperature = temperature.toFloatOrNull()?.coerceIn(0.0f, 2.0f) ?: currentConfig.temperature,
+                            topK = topK.toIntOrNull()?.coerceIn(1, 100) ?: currentConfig.topK,
+                            randomSeed = randomSeed.toIntOrNull() ?: currentConfig.randomSeed,
+                            useGpu = useGpu
+                        )
+                        onConfigUpdate(newConfig)
+                    } catch (e: Exception) {
+                        // Handle invalid input gracefully
+                        onConfigUpdate(currentConfig)
+                    }
+                }
+            ) {
+                Text("Apply")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 } 

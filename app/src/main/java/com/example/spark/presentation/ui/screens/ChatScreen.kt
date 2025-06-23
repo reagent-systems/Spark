@@ -5,12 +5,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.clickable
 import androidx.compose.animation.core.*
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -18,6 +20,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +33,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
 import com.example.spark.domain.models.ChatSession
 import com.example.spark.domain.models.LLMModel
+import com.example.spark.domain.models.ModelConfig
 import com.example.spark.presentation.ui.components.ChatBubble
 import kotlinx.coroutines.launch
 
@@ -41,24 +46,36 @@ fun ChatScreen(
     availableModels: List<LLMModel>,
     currentMessage: String,
     isGenerating: Boolean,
+    modelConfig: ModelConfig,
     onCreateChatSession: (String, String) -> Unit,
     onSelectChatSession: (String) -> Unit,
     onSendMessage: (String) -> Unit,
     onUpdateCurrentMessage: (String) -> Unit,
     onLoadModel: (String) -> Unit,
     onDeleteChatSession: (String) -> Unit,
+    onStopGeneration: () -> Unit,
+    onUpdateModelConfig: (ModelConfig) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showNewChatDialog by remember { mutableStateOf(false) }
+    var showModelConfigDialog by remember { mutableStateOf(false) }
     var isDrawerOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
-    // Auto-scroll to bottom when new messages arrive
-    LaunchedEffect(currentChatSession?.messages?.size) {
+    // Auto-scroll to bottom when new messages arrive or content changes
+    LaunchedEffect(currentChatSession?.messages?.size, currentChatSession?.messages?.lastOrNull()?.content) {
         if (currentChatSession?.messages?.isNotEmpty() == true) {
             coroutineScope.launch {
-                listState.animateScrollToItem(currentChatSession.messages.size - 1)
+                try {
+                    listState.animateScrollToItem(
+                        index = currentChatSession.messages.size - 1,
+                        scrollOffset = 0
+                    )
+                } catch (e: Exception) {
+                    // Fallback to instant scroll if animation fails
+                    listState.scrollToItem(currentChatSession.messages.size - 1)
+                }
             }
         }
     }
@@ -104,6 +121,12 @@ fun ChatScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1
                             )
+                            Text(
+                                text = "T:${modelConfig.temperature} • K:${modelConfig.topK} • ${modelConfig.maxTokens}tok • ${if (modelConfig.useGpu) "GPU" else "CPU"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                maxLines = 1
+                            )
                         }
                     }
                 },
@@ -118,6 +141,30 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    if (currentChatSession != null) {
+                        Box {
+                            IconButton(onClick = { showModelConfigDialog = true }) {
+                                Icon(
+                                    Icons.Default.Settings,
+                                    contentDescription = "Model Settings"
+                                )
+                            }
+                            // Show indicator if config is modified from defaults
+                            val defaultConfig = ModelConfig()
+                            if (modelConfig != defaultConfig) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme.primary,
+                                            shape = androidx.compose.foundation.shape.CircleShape
+                                        )
+                                        .align(androidx.compose.ui.Alignment.TopEnd)
+                                        .offset(x = (-2).dp, y = 2.dp)
+                                )
+                            }
+                        }
+                    }
                     IconButton(onClick = { showNewChatDialog = true }) {
                         Icon(
                             Icons.Default.Add,
@@ -221,13 +268,16 @@ fun ChatScreen(
                             .weight(1f)
                             .fillMaxWidth(),
                         contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        reverseLayout = false
                     ) {
                         items(currentChatSession.messages) { message ->
                             ChatBubble(message = message)
                         }
                         
-                        if (isGenerating) {
+                        // Show typing indicator only if generating and no partial response yet
+                        if (isGenerating && (currentChatSession.messages.lastOrNull()?.isUser == true || 
+                            currentChatSession.messages.lastOrNull()?.content?.isBlank() == true)) {
                             item {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -236,20 +286,25 @@ fun ChatScreen(
                                     Card(
                                         colors = CardDefaults.cardColors(
                                             containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                        ),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                                        shape = RoundedCornerShape(
+                                            topStart = 18.dp,
+                                            topEnd = 18.dp,
+                                            bottomStart = 6.dp,
+                                            bottomEnd = 18.dp
                                         )
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(16.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                strokeWidth = 2.dp
-                                            )
+                                            TypingIndicator()
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = "Generating response...",
-                                                style = MaterialTheme.typography.bodyMedium
+                                                text = "AI is thinking...",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }
@@ -283,32 +338,38 @@ fun ChatScreen(
                             
                             FloatingActionButton(
                                 onClick = {
-                                    if (currentMessage.isNotBlank()) {
+                                    if (isGenerating) {
+                                        onStopGeneration()
+                                    } else if (currentMessage.isNotBlank()) {
                                         onSendMessage(currentMessage)
-                                        onUpdateCurrentMessage("")
+                                        // Input field is cleared by the ViewModel
                                     }
                                 },
                                 modifier = Modifier.size(48.dp),
-                                containerColor = if (currentMessage.isBlank() || isGenerating) 
-                                    MaterialTheme.colorScheme.surfaceVariant 
-                                else 
-                                    MaterialTheme.colorScheme.primary
+                                containerColor = when {
+                                    isGenerating -> MaterialTheme.colorScheme.error
+                                    currentMessage.isBlank() -> MaterialTheme.colorScheme.surfaceVariant
+                                    else -> MaterialTheme.colorScheme.primary
+                                }
                             ) {
-                                if (isGenerating) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                } else {
-                                    Icon(
-                                        Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = "Send",
-                                        tint = if (currentMessage.isBlank()) 
-                                            MaterialTheme.colorScheme.onSurfaceVariant 
-                                        else 
-                                            MaterialTheme.colorScheme.onPrimary
-                                    )
+                                when {
+                                    isGenerating -> {
+                                        Icon(
+                                            Icons.Default.Stop,
+                                            contentDescription = "Stop Generation",
+                                            tint = MaterialTheme.colorScheme.onError
+                                        )
+                                    }
+                                    else -> {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.Send,
+                                            contentDescription = "Send",
+                                            tint = if (currentMessage.isBlank()) 
+                                                MaterialTheme.colorScheme.onSurfaceVariant 
+                                            else 
+                                                MaterialTheme.colorScheme.onPrimary
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -364,6 +425,18 @@ fun ChatScreen(
                 )
             }
         }
+    }
+    
+    // Model Configuration Dialog
+    if (showModelConfigDialog) {
+        ModelConfigDialog(
+            currentConfig = modelConfig,
+            onDismiss = { showModelConfigDialog = false },
+            onConfigUpdate = { newConfig ->
+                onUpdateModelConfig(newConfig)
+                showModelConfigDialog = false
+            }
+        )
     }
     
     // New Chat Dialog
@@ -628,6 +701,225 @@ fun NewChatDialog(
                 enabled = chatName.isNotBlank() && selectedModelId.isNotBlank() && availableModels.isNotEmpty()
             ) {
                 Text("Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun TypingIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "typing")
+    
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(3) { index ->
+            val animationDelay = index * 200
+            val scale by infiniteTransition.animateFloat(
+                initialValue = 0.5f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(600, delayMillis = animationDelay),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "dot_$index"
+            )
+            
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .scale(scale)
+                    .background(
+                        MaterialTheme.colorScheme.primary,
+                        shape = androidx.compose.foundation.shape.CircleShape
+                    )
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ModelConfigDialog(
+    currentConfig: ModelConfig,
+    onDismiss: () -> Unit,
+    onConfigUpdate: (ModelConfig) -> Unit
+) {
+    var maxTokens by remember { mutableStateOf(currentConfig.maxTokens.toString()) }
+    var temperature by remember { mutableStateOf(currentConfig.temperature.toString()) }
+    var topK by remember { mutableStateOf(currentConfig.topK.toString()) }
+    var randomSeed by remember { mutableStateOf(currentConfig.randomSeed.toString()) }
+    var useGpu by remember { mutableStateOf(currentConfig.useGpu) }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Model Configuration")
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Max Tokens
+                OutlinedTextField(
+                    value = maxTokens,
+                    onValueChange = { maxTokens = it },
+                    label = { Text("Max Output Tokens") },
+                    supportingText = { Text("Maximum number of tokens to generate (100-4000)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                
+                // Temperature
+                OutlinedTextField(
+                    value = temperature,
+                    onValueChange = { temperature = it },
+                    label = { Text("Temperature") },
+                    supportingText = { Text("Creativity level (0.0-2.0). Higher = more creative") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                
+                // Top K
+                OutlinedTextField(
+                    value = topK,
+                    onValueChange = { topK = it },
+                    label = { Text("Top K") },
+                    supportingText = { Text("Consider top K tokens (1-100)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                
+                // Random Seed
+                OutlinedTextField(
+                    value = randomSeed,
+                    onValueChange = { randomSeed = it },
+                    label = { Text("Random Seed") },
+                    supportingText = { Text("Seed for reproducible results (0 = random)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                
+                // GPU/CPU Selection
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Switch(
+                        checked = useGpu,
+                        onCheckedChange = { useGpu = it },
+                        modifier = Modifier.padding(end = 12.dp)
+                    )
+                    Column {
+                        Text(
+                            text = if (useGpu) "GPU Acceleration" else "CPU Processing",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = if (useGpu) "Faster inference, higher battery usage (Experimental)" else "Slower inference, lower battery usage",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                
+                // Note about GPU settings requiring model reload
+                if (useGpu != currentConfig.useGpu) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Text(
+                                text = "⚠️ GPU Setting Changed",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = "Models will need to be reloaded when changing GPU/CPU settings.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                }
+                
+                // Quick preset buttons
+                Text(
+                    text = "Quick Presets:",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            maxTokens = "1000"
+                            temperature = "0.3"
+                            topK = "20"
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Precise", style = MaterialTheme.typography.bodySmall)
+                    }
+                    
+                    OutlinedButton(
+                        onClick = {
+                            maxTokens = "1500"
+                            temperature = "0.7"
+                            topK = "40"
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Balanced", style = MaterialTheme.typography.bodySmall)
+                    }
+                    
+                    OutlinedButton(
+                        onClick = {
+                            maxTokens = "2000"
+                            temperature = "1.2"
+                            topK = "60"
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Creative", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    try {
+                        val newConfig = ModelConfig(
+                            maxTokens = maxTokens.toIntOrNull()?.coerceIn(100, 4000) ?: currentConfig.maxTokens,
+                            temperature = temperature.toFloatOrNull()?.coerceIn(0.0f, 2.0f) ?: currentConfig.temperature,
+                            topK = topK.toIntOrNull()?.coerceIn(1, 100) ?: currentConfig.topK,
+                            randomSeed = randomSeed.toIntOrNull() ?: currentConfig.randomSeed,
+                            useGpu = useGpu
+                        )
+                        onConfigUpdate(newConfig)
+                    } catch (e: Exception) {
+                        // Handle invalid input gracefully
+                        onConfigUpdate(currentConfig)
+                    }
+                }
+            ) {
+                Text("Apply")
             }
         },
         dismissButton = {
