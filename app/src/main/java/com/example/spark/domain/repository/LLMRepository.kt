@@ -31,4 +31,13 @@ interface LLMRepository {
     suspend fun getChatSession(sessionId: String): ChatSession?
     suspend fun addMessageToSession(sessionId: String, message: ChatMessage): Result<Unit>
     suspend fun deleteChatSession(sessionId: String): Result<Unit>
+    
+    // Model downloading
+    suspend fun downloadModel(
+        availableModel: com.example.spark.domain.models.AvailableModel,
+        onProgress: (Float) -> Unit
+    ): Result<LLMModel>
+    
+    // Model deletion
+    suspend fun deleteModel(modelId: String): Result<Unit>
 } 

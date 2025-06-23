@@ -8,6 +8,10 @@ plugins {
 android {
     namespace = "com.example.spark"
     compileSdk = 35
+    
+    lint {
+        disable.add("NullSafeMutableLiveData")
+    }
 
     defaultConfig {
         applicationId = "com.example.spark"

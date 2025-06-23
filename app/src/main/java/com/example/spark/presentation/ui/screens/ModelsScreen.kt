@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,18 +20,24 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.spark.domain.models.LLMModel
+import com.example.spark.domain.models.AvailableModel
 import com.example.spark.presentation.ui.components.ModelCard
+import com.example.spark.presentation.ui.components.AvailableModelCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelsScreen(
     models: List<LLMModel>,
+    downloadableModels: List<AvailableModel> = emptyList(),
     isLoading: Boolean,
     loadingModelId: String? = null,
+    downloadingModelId: String? = null,
+    downloadProgress: Float = 0f,
     onLoadModel: (String) -> Unit,
     onUnloadModel: (String) -> Unit,
     onAddModel: (String, String, String) -> Unit,
     onDeleteModel: (String) -> Unit,
+    onDownloadModel: (AvailableModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showAddModelDialog by remember { mutableStateOf(false) }
@@ -49,6 +56,9 @@ fun ModelsScreen(
             showAddModelDialog = true
         }
     }
+    
+    var selectedTabIndex by remember { mutableStateOf(0) }
+    val tabs = listOf("Local Models", "Download Models")
     
     Column(
         modifier = modifier
@@ -80,63 +90,129 @@ fun ModelsScreen(
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        if (isLoading) {
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        } else if (models.isEmpty()) {
-            // Empty state
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "No models available",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Add a model to get started",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                    Button(
-                        onClick = { filePickerLauncher.launch("*/*") },
-                        modifier = Modifier.padding(top = 16.dp)
-                    ) {
+        // Tabs
+        TabRow(selectedTabIndex = selectedTabIndex) {
+            tabs.forEachIndexed { index, title ->
+                Tab(
+                    selected = selectedTabIndex == index,
+                    onClick = { selectedTabIndex = index },
+                    text = { Text(title) },
+                    icon = {
                         Icon(
-                            Icons.Default.Add,
+                            if (index == 0) Icons.Default.Add else Icons.Default.CloudDownload,
                             contentDescription = null,
                             modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Add Model")
+                    }
+                )
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // Content based on selected tab
+        when (selectedTabIndex) {
+            0 -> {
+                // Local Models Tab
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else if (models.isEmpty()) {
+                    // Empty state
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "No models available",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Add a model to get started",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            Row(
+                                modifier = Modifier.padding(top = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { filePickerLauncher.launch("*/*") }
+                                ) {
+                                    Icon(
+                                        Icons.Default.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Add Model")
+                                }
+                                OutlinedButton(
+                                    onClick = { selectedTabIndex = 1 }
+                                ) {
+                                    Icon(
+                                        Icons.Default.CloudDownload,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Download")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Models list
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(models) { model ->
+                            ModelCard(
+                                model = model,
+                                isLoading = loadingModelId == model.id,
+                                onLoadClick = { onLoadModel(model.id) },
+                                onUnloadClick = { onUnloadModel(model.id) },
+                                onDeleteClick = { onDeleteModel(model.id) }
+                            )
+                        }
                     }
                 }
             }
-        } else {
-            // Models list
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(models) { model ->
-                    ModelCard(
-                        model = model,
-                        isLoading = loadingModelId == model.id,
-                        onLoadClick = { onLoadModel(model.id) },
-                        onUnloadClick = { onUnloadModel(model.id) },
-                        onDeleteClick = { onDeleteModel(model.id) }
-                    )
+            1 -> {
+                // Download Models Tab
+                if (downloadableModels.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(downloadableModels) { availableModel ->
+                            AvailableModelCard(
+                                model = availableModel,
+                                isDownloading = downloadingModelId == availableModel.id,
+                                downloadProgress = if (downloadingModelId == availableModel.id) downloadProgress else 0f,
+                                isAlreadyDownloaded = models.any { it.id == availableModel.id },
+                                onDownload = onDownloadModel
+                            )
+                        }
+                    }
                 }
             }
         }

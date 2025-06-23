@@ -6,6 +6,7 @@ import com.example.spark.domain.models.*
 import com.example.spark.domain.repository.LLMRepository
 import com.example.spark.network.server.ApiServer
 import com.example.spark.utils.NetworkUtils
+import com.example.spark.utils.ModelCatalog
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.*
@@ -13,6 +14,7 @@ import java.util.*
 data class MainUiState(
     val availableModels: List<LLMModel> = emptyList(),
     val loadedModels: List<LLMModel> = emptyList(),
+    val downloadableModels: List<AvailableModel> = emptyList(),
     val chatSessions: List<ChatSession> = emptyList(),
     val currentChatSession: ChatSession? = null,
     val isServerRunning: Boolean = false,
@@ -20,6 +22,8 @@ data class MainUiState(
     val serverLocalIp: String = "",
     val isLoading: Boolean = false,
     val loadingModelId: String? = null,
+    val downloadingModelId: String? = null,
+    val downloadProgress: Float = 0f,
     val errorMessage: String? = null,
     val currentMessage: String = "",
     val isGenerating: Boolean = false
@@ -44,12 +48,14 @@ class MainViewModel(
                 val models = llmRepository.getAvailableModels()
                 val loadedModels = llmRepository.getLoadedModels()
                 val sessions = llmRepository.getChatSessions()
+                val downloadableModels = ModelCatalog.getAvailableModels()
                 
                 _uiState.update {
                     it.copy(
                         availableModels = models,
                         loadedModels = loadedModels,
                         chatSessions = sessions,
+                        downloadableModels = downloadableModels,
                         isLoading = false,
                         isServerRunning = apiServer.isRunning(),
                         serverPort = apiServer.getPort()
@@ -322,7 +328,109 @@ class MainViewModel(
         _uiState.update { it.copy(errorMessage = null) }
     }
     
+    fun downloadModel(availableModel: AvailableModel) {
+        viewModelScope.launch {
+            _uiState.update { 
+                it.copy(
+                    downloadingModelId = availableModel.id,
+                    downloadProgress = 0f
+                ) 
+            }
+            
+            try {
+                val result = llmRepository.downloadModel(availableModel) { progress ->
+                    _uiState.update { 
+                        it.copy(downloadProgress = progress) 
+                    }
+                }
+                
+                result.fold(
+                    onSuccess = { model ->
+                        val models = llmRepository.getAvailableModels()
+                        _uiState.update {
+                            it.copy(
+                                availableModels = models,
+                                downloadingModelId = null,
+                                downloadProgress = 0f
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        _uiState.update {
+                            it.copy(
+                                downloadingModelId = null,
+                                downloadProgress = 0f,
+                                errorMessage = "Failed to download model: ${error.message}"
+                            )
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        downloadingModelId = null,
+                        downloadProgress = 0f,
+                        errorMessage = "Error downloading model: ${e.message}"
+                    )
+                }
+            }
+        }
+    }
+    
     fun refreshData() {
         loadInitialData()
+    }
+    
+    fun refreshDownloadableModels() {
+        viewModelScope.launch {
+            try {
+                ModelCatalog.clearCache()
+                val downloadableModels = ModelCatalog.getAvailableModels()
+                _uiState.update {
+                    it.copy(downloadableModels = downloadableModels)
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(errorMessage = "Failed to refresh downloadable models: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    fun deleteModel(modelId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(loadingModelId = modelId) }
+            try {
+                val result = llmRepository.deleteModel(modelId)
+                result.fold(
+                    onSuccess = {
+                        val availableModels = llmRepository.getAvailableModels()
+                        val loadedModels = llmRepository.getLoadedModels()
+                        _uiState.update {
+                            it.copy(
+                                availableModels = availableModels,
+                                loadedModels = loadedModels,
+                                loadingModelId = null
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        _uiState.update {
+                            it.copy(
+                                loadingModelId = null,
+                                errorMessage = "Failed to delete model: ${error.message}"
+                            )
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        loadingModelId = null,
+                        errorMessage = "Error deleting model: ${e.message}"
+                    )
+                }
+            }
+        }
     }
 } 

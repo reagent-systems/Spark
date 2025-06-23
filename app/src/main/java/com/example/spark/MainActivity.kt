@@ -106,19 +106,21 @@ fun SparkApp(viewModel: MainViewModel) {
         NavHost(
             navController = navController,
             startDestination = "models",
-            modifier = Modifier.padding(innerPadding)
+                        modifier = Modifier.padding(innerPadding)
         ) {
             composable("models") {
                 ModelsScreen(
                     models = uiState.availableModels,
+                    downloadableModels = uiState.downloadableModels,
                     isLoading = uiState.isLoading,
                     loadingModelId = uiState.loadingModelId,
+                    downloadingModelId = uiState.downloadingModelId,
+                    downloadProgress = uiState.downloadProgress,
                     onLoadModel = viewModel::loadModel,
                     onUnloadModel = viewModel::unloadModel,
                     onAddModel = viewModel::addModel,
-                    onDeleteModel = { modelId ->
-                        // TODO: Implement delete model
-                    }
+                    onDeleteModel = viewModel::deleteModel,
+                    onDownloadModel = viewModel::downloadModel
                 )
             }
             

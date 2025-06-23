@@ -10,7 +10,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.File
+import java.net.URL
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
@@ -27,26 +32,45 @@ class LLMRepositoryImpl(
     private val chatSessions = mutableListOf<ChatSession>()
     private val modelMutex = Mutex()
     
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
+    
     init {
-        // Initialize with some default models if they exist
+        // Load persisted models first, then initialize any new models found
+        loadPersistedModels()
         initializeDefaultModels()
+        // Load persisted chat sessions
+        loadPersistedChatSessions()
     }
     
     private fun initializeDefaultModels() {
-        // Check for models in the default directory
+        // Check for models in the default directory that aren't already loaded from persistence
         val modelsDir = File(context.filesDir, "models")
         if (modelsDir.exists()) {
             modelsDir.listFiles()?.forEach { file ->
                 if (file.extension == "task") {
-                    val model = LLMModel(
-                        id = UUID.randomUUID().toString(),
-                        name = file.nameWithoutExtension,
-                        description = "Local model",
-                        filePath = file.absolutePath,
-                        size = file.length()
-                    )
-                    availableModels.add(model)
+                    // Check if this model is already in our list (from persistence)
+                    val existingModel = availableModels.find { it.filePath == file.absolutePath }
+                    if (existingModel == null) {
+                        // Use filename without extension as ID for consistency
+                        val modelId = file.nameWithoutExtension
+                        val model = LLMModel(
+                            id = modelId,
+                            name = file.nameWithoutExtension.replace("_", " ").replace("-", " "),
+                            description = "Local model",
+                            filePath = file.absolutePath,
+                            size = file.length()
+                        )
+                        availableModels.add(model)
+                        Log.d(TAG, "Added new model found in directory: ${model.name}")
+                    }
                 }
+            }
+            // Save any new models found
+            if (availableModels.isNotEmpty()) {
+                savePersistedModels()
             }
         }
     }
@@ -198,15 +222,23 @@ class LLMRepositoryImpl(
                 file.length()
             }
             
+            // Get actual file path (copy content URI if needed)
+            val actualFilePath = getActualFilePath(filePath, name)
+            val actualFile = File(actualFilePath)
+            
+            // Use filename without extension as ID for consistency
+            val modelId = actualFile.nameWithoutExtension
+            
             val model = LLMModel(
-                id = UUID.randomUUID().toString(),
+                id = modelId,
                 name = name,
                 description = description,
-                filePath = filePath,
-                size = fileSize
+                filePath = actualFilePath,
+                size = actualFile.length()
             )
             
             availableModels.add(model)
+            savePersistedModels() // Save to persistence
             Log.d(TAG, "Successfully added model: $name with ID: ${model.id}")
             Result.success(model)
         } catch (e: Exception) {
@@ -247,6 +279,7 @@ class LLMRepositoryImpl(
             updatedAt = System.currentTimeMillis()
         )
         chatSessions.add(session)
+        savePersistedChatSessions() // Save to persistence
         return session
     }
     
@@ -331,5 +364,175 @@ class LLMRepositoryImpl(
         
         Log.d(TAG, "File copy completed: ${targetFile.absolutePath}")
         return targetFile.absolutePath
+    }
+    
+    override suspend fun downloadModel(
+        availableModel: AvailableModel,
+        onProgress: (Float) -> Unit
+    ): Result<LLMModel> = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Starting download for model: ${availableModel.name}")
+        try {
+            // Create models directory if it doesn't exist
+            val modelsDir = File(context.filesDir, "models")
+            if (!modelsDir.exists()) {
+                Log.d(TAG, "Creating models directory: ${modelsDir.absolutePath}")
+                modelsDir.mkdirs()
+            }
+            
+            // Create target file
+            val fileName = "${availableModel.id}.task"
+            val targetFile = File(modelsDir, fileName)
+            
+            // Check if model already exists
+            if (targetFile.exists()) {
+                Log.d(TAG, "Model already exists: ${targetFile.absolutePath}")
+                val existingModel = LLMModel(
+                    id = availableModel.id, // Use the same ID as AvailableModel
+                    name = availableModel.name,
+                    description = availableModel.description,
+                    filePath = targetFile.absolutePath,
+                    size = targetFile.length(),
+                    modelType = availableModel.modelType
+                )
+                // Check if not already in list to avoid duplicates
+                if (!availableModels.any { it.id == availableModel.id }) {
+                    availableModels.add(existingModel)
+                    savePersistedModels() // Save to persistence
+                }
+                return@withContext Result.success(existingModel)
+            }
+            
+            Log.d(TAG, "Downloading from URL: ${availableModel.downloadUrl}")
+            
+            // Download the file
+            val url = URL(availableModel.downloadUrl)
+            val connection = url.openConnection()
+            val contentLength = connection.contentLength
+            
+            Log.d(TAG, "Content length: $contentLength bytes")
+            
+            connection.getInputStream().use { inputStream ->
+                targetFile.outputStream().use { outputStream ->
+                    val buffer = ByteArray(8192)
+                    var totalBytesRead = 0L
+                    var bytesRead: Int
+                    
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        outputStream.write(buffer, 0, bytesRead)
+                        totalBytesRead += bytesRead
+                        
+                        // Update progress
+                        if (contentLength > 0) {
+                            val progress = totalBytesRead.toFloat() / contentLength.toFloat()
+                            onProgress(progress)
+                        }
+                    }
+                }
+            }
+            
+            Log.d(TAG, "Download completed: ${targetFile.absolutePath}")
+            
+            // Create LLMModel and add to available models
+            val model = LLMModel(
+                id = availableModel.id, // Use the same ID as AvailableModel
+                name = availableModel.name,
+                description = availableModel.description,
+                filePath = targetFile.absolutePath,
+                size = targetFile.length(),
+                modelType = availableModel.modelType
+            )
+            
+            // Check if not already in list to avoid duplicates
+            if (!availableModels.any { it.id == availableModel.id }) {
+                availableModels.add(model)
+                savePersistedModels() // Save to persistence
+            }
+            Log.d(TAG, "Successfully downloaded and added model: ${model.name}")
+            
+            Result.success(model)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to download model: ${availableModel.name}", e)
+            Result.failure(e)
+        }
+    }
+    
+    override suspend fun deleteModel(modelId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Deleting model: $modelId")
+        try {
+            // First unload the model if it's loaded
+            if (loadedModels.containsKey(modelId)) {
+                Log.d(TAG, "Unloading model before deletion: $modelId")
+                unloadModel(modelId)
+            }
+            
+            // Find the model in our available models
+            val model = availableModels.find { it.id == modelId }
+            if (model == null) {
+                Log.w(TAG, "Model not found for deletion: $modelId")
+                return@withContext Result.failure(Exception("Model not found: $modelId"))
+            }
+            
+            // Delete the file
+            val file = File(model.filePath)
+            if (file.exists()) {
+                val deleted = file.delete()
+                if (deleted) {
+                    Log.d(TAG, "Successfully deleted model file: ${model.filePath}")
+                    // Remove from available models list
+                    availableModels.removeAll { it.id == modelId }
+                    savePersistedModels() // Save to persistence
+                    Log.d(TAG, "Model removed from available models list: $modelId")
+                    Result.success(Unit)
+                } else {
+                    Log.e(TAG, "Failed to delete model file: ${model.filePath}")
+                    Result.failure(Exception("Failed to delete model file"))
+                }
+            } else {
+                Log.w(TAG, "Model file does not exist: ${model.filePath}")
+                // Remove from available models list anyway
+                availableModels.removeAll { it.id == modelId }
+                savePersistedModels() // Save to persistence
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error deleting model: $modelId", e)
+            Result.failure(e)
+        }
+    }
+    
+    private fun loadPersistedModels() {
+        try {
+            val modelsFile = File(context.filesDir, "models_list.json")
+            if (modelsFile.exists()) {
+                Log.d(TAG, "Loading persisted models from: ${modelsFile.absolutePath}")
+                val jsonString = modelsFile.readText()
+                val models = json.decodeFromString<List<LLMModel>>(jsonString)
+                
+                // Verify files still exist and add to available models
+                models.forEach { model ->
+                    val file = File(model.filePath)
+                    if (file.exists()) {
+                        Log.d(TAG, "Found persisted model: ${model.name}")
+                        availableModels.add(model)
+                    } else {
+                        Log.w(TAG, "Persisted model file no longer exists: ${model.filePath}")
+                    }
+                }
+                Log.d(TAG, "Loaded ${availableModels.size} persisted models")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load persisted models", e)
+        }
+    }
+    
+    private fun savePersistedModels() {
+        try {
+            val modelsFile = File(context.filesDir, "models_list.json")
+            val jsonString = json.encodeToString(availableModels.toList())
+            modelsFile.writeText(jsonString)
+            Log.d(TAG, "Saved ${availableModels.size} models to persistence")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save persisted models", e)
+        }
     }
 } 

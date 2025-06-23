@@ -47,4 +47,42 @@ data class ChatSession(
     val modelId: String,
     val createdAt: Long,
     val updatedAt: Long
+)
+
+// Add new data class for available models that can be downloaded
+@Serializable
+data class AvailableModel(
+    val id: String,
+    val name: String,
+    val description: String,
+    val downloadUrl: String,
+    val modelType: ModelType,
+    val size: String,
+    val quantization: String,
+    val contextLength: Int,
+    val author: String = "LiteRT Community",
+    val isRecommended: Boolean = false,
+    val tags: List<String> = emptyList(),
+    val requirements: ModelRequirements? = null
+)
+
+@Serializable
+data class ModelRequirements(
+    val minRam: String,
+    val recommendedRam: String
+)
+
+@Serializable
+data class ModelCatalogResponse(
+    val version: String,
+    val lastUpdated: String,
+    val models: List<AvailableModel>,
+    val categories: List<ModelCategory>
+)
+
+@Serializable
+data class ModelCategory(
+    val id: String,
+    val name: String,
+    val description: String
 ) 
