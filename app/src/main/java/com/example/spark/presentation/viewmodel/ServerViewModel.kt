@@ -85,55 +85,6 @@ class ServerViewModel(
         
         // Update the API server's default config
         apiServer.updateDefaultModelConfig(newConfig)
-        
-        // Check if GPU setting changed and reload models if necessary
-        val currentConfig = _uiState.value.modelConfig
-        if (currentConfig.useGpu != newConfig.useGpu) {
-            reloadModelsForGpuChange()
-        }
-    }
-    
-    private fun reloadModelsForGpuChange() {
-        viewModelScope.launch {
-            try {
-                val loadedModels = llmRepository.getLoadedModels()
-                if (loadedModels.isNotEmpty()) {
-                    // Show loading state
-                    _uiState.update { 
-                        it.copy(
-                            isLoading = true,
-                            loadingMessage = "Reloading models for GPU change"
-                        )
-                    }
-                    
-                    // Unload all models first
-                    for (model in loadedModels) {
-                        llmRepository.unloadModel(model.id)
-                    }
-                    
-                    // Reload them with new GPU setting
-                    for (model in loadedModels) {
-                        llmRepository.loadModel(model.id, _uiState.value.modelConfig)
-                    }
-                    
-                    // Update UI state
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            loadingMessage = null
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        loadingMessage = null,
-                        errorMessage = "Failed to reload models for GPU change: ${e.message}"
-                    )
-                }
-            }
-        }
     }
     
     private fun loadModelConfig() {

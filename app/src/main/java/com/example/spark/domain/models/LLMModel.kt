@@ -27,8 +27,7 @@ data class ModelConfig(
     val maxTokens: Int = 1000,
     val temperature: Float = 0.8f,
     val topK: Int = 40,
-    val randomSeed: Int = 0,
-    val useGpu: Boolean = false
+    val randomSeed: Int = 0
 )
 
 @Serializable

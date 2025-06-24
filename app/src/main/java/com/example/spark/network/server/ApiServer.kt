@@ -113,8 +113,7 @@ class ApiServer(
                                     maxTokens = if (request.max_tokens == 1000) defaultModelConfig.maxTokens else request.max_tokens,
                                     temperature = if (request.temperature == 0.8f) defaultModelConfig.temperature else request.temperature,
                                     topK = if (request.top_k == 40) defaultModelConfig.topK else request.top_k,
-                                    randomSeed = defaultModelConfig.randomSeed,
-                                    useGpu = defaultModelConfig.useGpu
+                                    randomSeed = defaultModelConfig.randomSeed
                                 )
                                 
                                 val result = llmRepository.generateResponseSync(

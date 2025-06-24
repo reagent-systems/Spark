@@ -248,6 +248,8 @@ POST /spark/models/{modelId}/unload
    - Monitor memory usage
    - Restart app if performance degrades
 
+**Note:** This app runs models on CPU using MediaPipe's LLM Inference API. GPU acceleration is not currently supported by MediaPipe for LLM inference tasks.
+
 ## Troubleshooting
 
 ### Common Issues

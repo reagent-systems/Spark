@@ -124,7 +124,7 @@ fun ChatScreen(
                                 maxLines = 1
                             )
                             Text(
-                                text = "T:${modelConfig.temperature} • K:${modelConfig.topK} • ${modelConfig.maxTokens}tok • ${if (modelConfig.useGpu) "GPU" else "CPU"}",
+                                text = "T:${modelConfig.temperature} • K:${modelConfig.topK} • ${modelConfig.maxTokens}tok • CPU",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 maxLines = 1
@@ -757,8 +757,7 @@ fun ModelConfigDialog(
     var temperature by remember { mutableStateOf(currentConfig.temperature.toString()) }
     var topK by remember { mutableStateOf(currentConfig.topK.toString()) }
     var randomSeed by remember { mutableStateOf(currentConfig.randomSeed.toString()) }
-    var useGpu by remember { mutableStateOf(currentConfig.useGpu) }
-    
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -826,54 +825,6 @@ fun ModelConfigDialog(
                     singleLine = true
                 )
                 
-                // GPU/CPU Selection
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                ) {
-                    Switch(
-                        checked = useGpu,
-                        onCheckedChange = { useGpu = it },
-                        modifier = Modifier.padding(end = 12.dp)
-                    )
-                    Column {
-                        Text(
-                            text = if (useGpu) "GPU Acceleration" else "CPU Processing",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            text = if (useGpu) "Faster inference, higher battery usage (Experimental)" else "Slower inference, lower battery usage",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                
-                // Note about GPU settings requiring model reload
-                if (useGpu != currentConfig.useGpu) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp)
-                        ) {
-                            Text(
-                                text = "⚠️ GPU Setting Changed",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                            Text(
-                                text = "Models will need to be reloaded when changing GPU/CPU settings.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                        }
-                    }
-                }
-                
                 // Quick preset buttons
                 Text(
                     text = "Quick Presets:",
@@ -939,8 +890,7 @@ fun ModelConfigDialog(
                                     maxTokens = maxTokens.toIntOrNull()?.coerceIn(100, 4000) ?: currentConfig.maxTokens,
                                     temperature = temperature.toFloatOrNull()?.coerceIn(0.0f, 2.0f) ?: currentConfig.temperature,
                                     topK = topK.toIntOrNull()?.coerceIn(1, 100) ?: currentConfig.topK,
-                                    randomSeed = randomSeed.toIntOrNull() ?: currentConfig.randomSeed,
-                                    useGpu = useGpu
+                                    randomSeed = randomSeed.toIntOrNull() ?: currentConfig.randomSeed
                                 )
                                 onConfigUpdate(newConfig)
                             } catch (e: Exception) {
