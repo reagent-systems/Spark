@@ -39,6 +39,9 @@ interface LLMRepository {
         onProgress: (Float) -> Unit
     ): Result<LLMModel>
     
+    // Cancel model download
+    suspend fun cancelDownload(modelId: String): Result<Unit>
+    
     // Model deletion
     suspend fun deleteModel(modelId: String): Result<Unit>
 } 

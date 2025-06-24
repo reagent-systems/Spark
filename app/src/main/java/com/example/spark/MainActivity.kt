@@ -1,5 +1,7 @@
 package com.example.spark
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -23,24 +25,41 @@ import com.example.spark.data.repository.LLMRepositoryImpl
 import com.example.spark.network.server.ApiServer
 import com.example.spark.presentation.ui.screens.*
 import com.example.spark.presentation.ui.components.ModelLoadingDialog
+import com.example.spark.presentation.ui.components.HuggingFaceTokenDialog
+import com.example.spark.presentation.ui.components.HuggingFaceSettingsDialog
+import com.example.spark.presentation.ui.components.CustomUrlDownloadDialog
+import com.example.spark.presentation.ui.components.DeleteModelConfirmationDialog
 import com.example.spark.presentation.viewmodel.MainViewModel
 import com.example.spark.ui.theme.SparkTheme
+import com.example.spark.utils.HuggingFaceAuth
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: MainViewModel
+    private lateinit var huggingFaceAuth: HuggingFaceAuth
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
+        // Initialize HuggingFace authentication
+        huggingFaceAuth = HuggingFaceAuth(this)
+        huggingFaceAuth.initialize(this)
+        
         // Initialize dependencies
-        val llmRepository = LLMRepositoryImpl(this)
+        val llmRepository = LLMRepositoryImpl(this, huggingFaceAuth)
         val apiServer = ApiServer(this, llmRepository)
-        viewModel = MainViewModel(llmRepository, apiServer, this)
+        viewModel = MainViewModel(llmRepository, apiServer, this, huggingFaceAuth)
         
         setContent {
             SparkTheme {
-                SparkApp(viewModel = viewModel)
+                SparkApp(
+                    viewModel = viewModel,
+                    huggingFaceAuth = huggingFaceAuth,
+                    onOpenUrl = { url ->
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                        startActivity(intent)
+                    }
+                )
             }
         }
     }
@@ -51,12 +70,20 @@ class MainActivity : ComponentActivity() {
         if (::viewModel.isInitialized) {
             viewModel.stopServer()
         }
+        // Clean up auth service
+        if (::huggingFaceAuth.isInitialized) {
+            huggingFaceAuth.dispose()
+        }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SparkApp(viewModel: MainViewModel) {
+fun SparkApp(
+    viewModel: MainViewModel,
+    huggingFaceAuth: HuggingFaceAuth,
+    onOpenUrl: (String) -> Unit
+) {
     val navController = rememberNavController()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -109,6 +136,46 @@ fun SparkApp(viewModel: MainViewModel) {
             modelName = uiState.loadingModelName ?: "",
             isVisible = uiState.loadingModelId != null
         )
+        
+        // HuggingFace Token Dialog
+        HuggingFaceTokenDialog(
+            isVisible = uiState.showHuggingFaceTokenDialog,
+            onDismiss = viewModel::hideHuggingFaceTokenDialog,
+            onTokenSubmit = viewModel::submitHuggingFaceToken,
+            onOpenTokenPage = { onOpenUrl("https://huggingface.co/settings/tokens") }
+        )
+
+        // HuggingFace Settings Dialog
+        if (uiState.showHuggingFaceSettingsDialog) {
+            HuggingFaceSettingsDialog(
+                isAuthenticated = uiState.isHuggingFaceAuthenticated,
+                currentToken = if (uiState.isHuggingFaceAuthenticated) huggingFaceAuth.getAccessToken() else null,
+                onDismiss = viewModel::hideHuggingFaceSettingsDialog,
+                onSaveToken = viewModel::saveHuggingFaceToken,
+                onRemoveToken = viewModel::removeHuggingFaceToken,
+                onOpenTokenPage = { onOpenUrl("https://huggingface.co/settings/tokens") }
+            )
+        }
+
+        // Custom URL Download Dialog
+        if (uiState.showCustomUrlDialog) {
+            CustomUrlDownloadDialog(
+                urlInput = uiState.customUrlInput,
+                isDownloading = uiState.isDownloadingCustomUrl,
+                downloadProgress = uiState.downloadProgress,
+                onDismiss = viewModel::hideCustomUrlDialog,
+                onUrlChange = viewModel::updateCustomUrlInput,
+                onDownload = viewModel::downloadFromCustomUrl
+            )
+        }
+
+        // Delete Model Confirmation Dialog
+        DeleteModelConfirmationDialog(
+            isVisible = uiState.showDeleteConfirmationDialog,
+            modelName = uiState.modelToDelete?.name ?: "",
+            onDismiss = viewModel::cancelDeleteModel,
+            onConfirm = viewModel::confirmDeleteModel
+        )
         NavHost(
             navController = navController,
             startDestination = "models",
@@ -126,7 +193,10 @@ fun SparkApp(viewModel: MainViewModel) {
                     onUnloadModel = viewModel::unloadModel,
                     onAddModel = viewModel::addModel,
                     onDeleteModel = viewModel::deleteModel,
-                    onDownloadModel = viewModel::downloadModel
+                    onDownloadModel = viewModel::downloadModel,
+                    onCancelDownload = viewModel::cancelDownload,
+                    onShowHuggingFaceSettings = viewModel::showHuggingFaceSettingsDialog,
+                    onShowCustomUrlDialog = viewModel::showCustomUrlDialog
                 )
             }
             

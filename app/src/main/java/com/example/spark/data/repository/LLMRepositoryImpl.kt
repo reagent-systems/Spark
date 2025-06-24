@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import com.example.spark.domain.models.*
 import com.example.spark.domain.repository.LLMRepository
+import com.example.spark.utils.HuggingFaceAuth
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -15,15 +16,19 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.Job
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
 import java.net.URL
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
 class LLMRepositoryImpl(
-    private val context: Context
+    private val context: Context,
+    private val huggingFaceAuth: HuggingFaceAuth
 ) : LLMRepository {
     
     companion object {
@@ -34,6 +39,7 @@ class LLMRepositoryImpl(
     private val availableModels = mutableListOf<LLMModel>()
     private val chatSessions = mutableListOf<ChatSession>()
     private val modelMutex = Mutex()
+    private val downloadJobs = ConcurrentHashMap<String, Job>()
     
     private val json = Json {
         ignoreUnknownKeys = true
@@ -396,6 +402,12 @@ class LLMRepositoryImpl(
         onProgress: (Float) -> Unit
     ): Result<LLMModel> = withContext(Dispatchers.IO) {
         Log.d(TAG, "Starting download for model: ${availableModel.name}")
+        
+        // Store the current job for cancellation
+        currentCoroutineContext()[Job]?.let { job ->
+            downloadJobs[availableModel.id] = job
+        }
+        
         try {
             // Create models directory if it doesn't exist
             val modelsDir = File(context.filesDir, "models")
@@ -429,30 +441,26 @@ class LLMRepositoryImpl(
             
             Log.d(TAG, "Downloading from URL: ${availableModel.downloadUrl}")
             
-            // Download the file
-            val url = URL(availableModel.downloadUrl)
-            val connection = url.openConnection()
-            val contentLength = connection.contentLength
-            
-            Log.d(TAG, "Content length: $contentLength bytes")
-            
-            connection.getInputStream().use { inputStream ->
-                targetFile.outputStream().use { outputStream ->
-                    val buffer = ByteArray(8192)
-                    var totalBytesRead = 0L
-                    var bytesRead: Int
-                    
-                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                        outputStream.write(buffer, 0, bytesRead)
-                        totalBytesRead += bytesRead
-                        
-                        // Update progress
-                        if (contentLength > 0) {
-                            val progress = totalBytesRead.toFloat() / contentLength.toFloat()
-                            onProgress(progress)
-                        }
-                    }
+            // Check if authentication is required for this model
+            if (availableModel.needsHuggingFaceAuth) {
+                Log.d(TAG, "Model requires HuggingFace authentication")
+                val authResult = huggingFaceAuth.authenticate()
+                if (authResult.isFailure) {
+                    Log.e(TAG, "Authentication failed for model: ${availableModel.name}")
+                    return@withContext Result.failure(authResult.exceptionOrNull() ?: Exception("Authentication failed"))
                 }
+                
+                val accessToken = authResult.getOrNull()
+                if (accessToken.isNullOrEmpty()) {
+                    Log.e(TAG, "No access token available for authenticated download")
+                    return@withContext Result.failure(Exception("No access token available"))
+                }
+                
+                // Use OkHttp for authenticated download
+                downloadWithAuthentication(availableModel, targetFile, accessToken, onProgress)
+            } else {
+                // Use standard download for non-authenticated models
+                downloadWithoutAuthentication(availableModel, targetFile, onProgress)
             }
             
             Log.d(TAG, "Download completed: ${targetFile.absolutePath}")
@@ -477,7 +485,96 @@ class LLMRepositoryImpl(
             Result.success(model)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to download model: ${availableModel.name}", e)
+            
+            // Clean up partial file if download was cancelled or failed
+            val targetFile = File(File(context.filesDir, "models"), "${availableModel.id}.task")
+            if (targetFile.exists() && targetFile.length() == 0L) {
+                targetFile.delete()
+                Log.d(TAG, "Cleaned up empty file after failed download: ${targetFile.absolutePath}")
+            }
+            
             Result.failure(e)
+        } finally {
+            // Clean up the download job reference
+            downloadJobs.remove(availableModel.id)
+        }
+    }
+    
+    private suspend fun downloadWithAuthentication(
+        availableModel: AvailableModel,
+        targetFile: File,
+        accessToken: String,
+        onProgress: (Float) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        val client = OkHttpClient()
+        val request = Request.Builder()
+            .url(availableModel.downloadUrl)
+            .addHeader("Authorization", "Bearer $accessToken")
+            .build()
+        
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw Exception("HTTP ${response.code}: ${response.message}")
+            }
+            
+            val contentLength = response.body?.contentLength() ?: -1L
+            Log.d(TAG, "Authenticated download content length: $contentLength bytes")
+            
+            response.body?.byteStream()?.use { inputStream ->
+                targetFile.outputStream().use { outputStream ->
+                    val buffer = ByteArray(8192)
+                    var totalBytesRead = 0L
+                    var bytesRead: Int
+                    
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        // Check for cancellation
+                        currentCoroutineContext().ensureActive()
+                        
+                        outputStream.write(buffer, 0, bytesRead)
+                        totalBytesRead += bytesRead
+                        
+                        // Update progress
+                        if (contentLength > 0) {
+                            val progress = totalBytesRead.toFloat() / contentLength.toFloat()
+                            onProgress(progress)
+                        }
+                    }
+                }
+            } ?: throw Exception("No response body")
+        }
+    }
+    
+    private suspend fun downloadWithoutAuthentication(
+        availableModel: AvailableModel,
+        targetFile: File,
+        onProgress: (Float) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        val url = URL(availableModel.downloadUrl)
+        val connection = url.openConnection()
+        val contentLength = connection.contentLength
+        
+        Log.d(TAG, "Standard download content length: $contentLength bytes")
+        
+        connection.getInputStream().use { inputStream ->
+            targetFile.outputStream().use { outputStream ->
+                val buffer = ByteArray(8192)
+                var totalBytesRead = 0L
+                var bytesRead: Int
+                
+                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                    // Check for cancellation
+                    currentCoroutineContext().ensureActive()
+                    
+                    outputStream.write(buffer, 0, bytesRead)
+                    totalBytesRead += bytesRead
+                    
+                    // Update progress
+                    if (contentLength > 0) {
+                        val progress = totalBytesRead.toFloat() / contentLength.toFloat()
+                        onProgress(progress)
+                    }
+                }
+            }
         }
     }
     
@@ -521,6 +618,33 @@ class LLMRepositoryImpl(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error deleting model: $modelId", e)
+            Result.failure(e)
+        }
+    }
+    
+    override suspend fun cancelDownload(modelId: String): Result<Unit> {
+        return try {
+            Log.d(TAG, "Cancelling download for model: $modelId")
+            val job = downloadJobs[modelId]
+            if (job != null) {
+                job.cancel()
+                downloadJobs.remove(modelId)
+                
+                // Clean up partial file
+                val targetFile = File(File(context.filesDir, "models"), "${modelId}.task")
+                if (targetFile.exists()) {
+                    targetFile.delete()
+                    Log.d(TAG, "Cleaned up partial file after cancellation: ${targetFile.absolutePath}")
+                }
+                
+                Log.d(TAG, "Successfully cancelled download for model: $modelId")
+                Result.success(Unit)
+            } else {
+                Log.w(TAG, "No active download found for model: $modelId")
+                Result.failure(Exception("No active download found"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to cancel download for model: $modelId", e)
             Result.failure(e)
         }
     }

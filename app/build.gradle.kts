@@ -104,6 +104,12 @@ dependencies {
     // Icons
     implementation("androidx.compose.material:material-icons-extended:1.5.4")
     
+    // Browser support for HuggingFace authentication
+    implementation("androidx.browser:browser:1.7.0")
+    
+    // HTTP client for authenticated downloads
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

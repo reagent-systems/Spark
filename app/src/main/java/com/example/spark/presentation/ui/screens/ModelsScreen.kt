@@ -12,6 +12,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,6 +40,9 @@ fun ModelsScreen(
     onAddModel: (String, String, String) -> Unit,
     onDeleteModel: (String) -> Unit,
     onDownloadModel: (AvailableModel) -> Unit,
+    onCancelDownload: (AvailableModel) -> Unit,
+    onShowHuggingFaceSettings: () -> Unit = {},
+    onShowCustomUrlDialog: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showAddModelDialog by remember { mutableStateOf(false) }
@@ -77,14 +82,30 @@ fun ModelsScreen(
                 fontWeight = FontWeight.Bold
             )
             
-            FloatingActionButton(
-                onClick = { filePickerLauncher.launch("*/*") },
-                modifier = Modifier.size(48.dp)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = "Add Model"
-                )
+                // Settings button
+                IconButton(
+                    onClick = onShowHuggingFaceSettings
+                ) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = "HuggingFace Settings"
+                    )
+                }
+                
+                // Add model button
+                FloatingActionButton(
+                    onClick = { filePickerLauncher.launch("*/*") },
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "Add Model"
+                    )
+                }
             }
         }
         
@@ -192,25 +213,44 @@ fun ModelsScreen(
             }
             1 -> {
                 // Download Models Tab
-                if (downloadableModels.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center
+                Column {
+                    // Custom URL button
+                    OutlinedButton(
+                        onClick = onShowCustomUrlDialog,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp)
                     ) {
-                        CircularProgressIndicator()
+                        Icon(
+                            Icons.Default.Link,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Download from Custom URL")
                     }
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(downloadableModels) { availableModel ->
-                            AvailableModelCard(
-                                model = availableModel,
-                                isDownloading = downloadingModelId == availableModel.id,
-                                downloadProgress = if (downloadingModelId == availableModel.id) downloadProgress else 0f,
-                                isAlreadyDownloaded = models.any { it.id == availableModel.id },
-                                onDownload = onDownloadModel
-                            )
+                    
+                    if (downloadableModels.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(downloadableModels) { availableModel ->
+                                AvailableModelCard(
+                                    model = availableModel,
+                                    isDownloading = downloadingModelId == availableModel.id,
+                                    downloadProgress = if (downloadingModelId == availableModel.id) downloadProgress else 0f,
+                                    isAlreadyDownloaded = models.any { it.id == availableModel.id },
+                                    onDownload = onDownloadModel,
+                                    onCancelDownload = onCancelDownload
+                                )
+                            }
                         }
                     }
                 }

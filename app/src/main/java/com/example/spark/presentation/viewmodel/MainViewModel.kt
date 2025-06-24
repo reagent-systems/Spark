@@ -10,6 +10,7 @@ import com.example.spark.utils.ModelCatalog
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import android.content.Context
@@ -33,13 +34,23 @@ data class MainUiState(
     val errorMessage: String? = null,
     val currentMessage: String = "",
     val isGenerating: Boolean = false,
-    val modelConfig: ModelConfig = ModelConfig()
+    val modelConfig: ModelConfig = ModelConfig(),
+    val showHuggingFaceTokenDialog: Boolean = false,
+    val isHuggingFaceAuthenticated: Boolean = false,
+    val pendingDownloadModel: AvailableModel? = null,
+    val showHuggingFaceSettingsDialog: Boolean = false,
+    val showCustomUrlDialog: Boolean = false,
+    val customUrlInput: String = "",
+    val isDownloadingCustomUrl: Boolean = false,
+    val showDeleteConfirmationDialog: Boolean = false,
+    val modelToDelete: LLMModel? = null
 )
 
 class MainViewModel(
     private val llmRepository: LLMRepository,
     private val apiServer: ApiServer,
-    private val context: Context
+    private val context: Context,
+    private val huggingFaceAuth: com.example.spark.utils.HuggingFaceAuth
 ) : ViewModel() {
     
     private val json = Json {
@@ -53,6 +64,12 @@ class MainViewModel(
     init {
         loadInitialData()
         loadModelConfig()
+        checkHuggingFaceAuthentication()
+    }
+    
+    private fun checkHuggingFaceAuthentication() {
+        val isAuthenticated = huggingFaceAuth.isAuthenticated()
+        _uiState.update { it.copy(isHuggingFaceAuthenticated = isAuthenticated) }
     }
     
     private fun loadInitialData() {
@@ -565,6 +582,18 @@ class MainViewModel(
     
     fun downloadModel(availableModel: AvailableModel) {
         viewModelScope.launch {
+            // Check if model requires authentication
+            if (availableModel.needsHuggingFaceAuth && !huggingFaceAuth.isAuthenticated()) {
+                // Show authentication dialog
+                _uiState.update { 
+                    it.copy(
+                        showHuggingFaceTokenDialog = true,
+                        pendingDownloadModel = availableModel
+                    ) 
+                }
+                return@launch
+            }
+            
             _uiState.update { 
                 it.copy(
                     downloadingModelId = availableModel.id,
@@ -591,11 +620,64 @@ class MainViewModel(
                         }
                     },
                     onFailure = { error ->
+                        // Don't show error for cancellation
+                        if (error !is kotlinx.coroutines.CancellationException) {
+                            _uiState.update {
+                                it.copy(
+                                    downloadingModelId = null,
+                                    downloadProgress = 0f,
+                                    errorMessage = "Failed to download model: ${error.message}"
+                                )
+                            }
+                        } else {
+                            _uiState.update {
+                                it.copy(
+                                    downloadingModelId = null,
+                                    downloadProgress = 0f
+                                )
+                            }
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                // Don't show error for cancellation
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    _uiState.update {
+                        it.copy(
+                            downloadingModelId = null,
+                            downloadProgress = 0f,
+                            errorMessage = "Error downloading model: ${e.message}"
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            downloadingModelId = null,
+                            downloadProgress = 0f
+                        )
+                    }
+                }
+            }
+        }
+    }
+    
+    fun cancelDownload(availableModel: AvailableModel) {
+        viewModelScope.launch {
+            try {
+                val result = llmRepository.cancelDownload(availableModel.id)
+                result.fold(
+                    onSuccess = {
                         _uiState.update {
                             it.copy(
                                 downloadingModelId = null,
-                                downloadProgress = 0f,
-                                errorMessage = "Failed to download model: ${error.message}"
+                                downloadProgress = 0f
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        _uiState.update {
+                            it.copy(
+                                errorMessage = "Failed to cancel download: ${error.message}"
                             )
                         }
                     }
@@ -603,9 +685,7 @@ class MainViewModel(
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
-                        downloadingModelId = null,
-                        downloadProgress = 0f,
-                        errorMessage = "Error downloading model: ${e.message}"
+                        errorMessage = "Error cancelling download: ${e.message}"
                     )
                 }
             }
@@ -633,40 +713,116 @@ class MainViewModel(
     }
     
     fun deleteModel(modelId: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(loadingModelId = modelId) }
-            try {
-                val result = llmRepository.deleteModel(modelId)
-                result.fold(
-                    onSuccess = {
-                        val availableModels = llmRepository.getAvailableModels()
-                        val loadedModels = llmRepository.getLoadedModels()
-                        _uiState.update {
-                            it.copy(
-                                availableModels = availableModels,
-                                loadedModels = loadedModels,
-                                loadingModelId = null
-                            )
-                        }
-                    },
-                    onFailure = { error ->
-                        _uiState.update {
-                            it.copy(
-                                loadingModelId = null,
-                                errorMessage = "Failed to delete model: ${error.message}"
-                            )
-                        }
-                    }
+        // Find the model to show in confirmation dialog
+        val model = _uiState.value.availableModels.find { it.id == modelId }
+        if (model != null) {
+            _uiState.update {
+                it.copy(
+                    showDeleteConfirmationDialog = true,
+                    modelToDelete = model
                 )
-            } catch (e: Exception) {
-                _uiState.update {
+            }
+        }
+    }
+    
+    fun confirmDeleteModel() {
+        val modelToDelete = _uiState.value.modelToDelete
+        if (modelToDelete != null) {
+            viewModelScope.launch {
+                _uiState.update { 
                     it.copy(
-                        loadingModelId = null,
-                        errorMessage = "Error deleting model: ${e.message}"
+                        loadingModelId = modelToDelete.id,
+                        showDeleteConfirmationDialog = false,
+                        modelToDelete = null
+                    ) 
+                }
+                try {
+                    val result = llmRepository.deleteModel(modelToDelete.id)
+                    result.fold(
+                        onSuccess = {
+                            val availableModels = llmRepository.getAvailableModels()
+                            val loadedModels = llmRepository.getLoadedModels()
+                            _uiState.update {
+                                it.copy(
+                                    availableModels = availableModels,
+                                    loadedModels = loadedModels,
+                                    loadingModelId = null
+                                )
+                            }
+                        },
+                        onFailure = { error ->
+                            _uiState.update {
+                                it.copy(
+                                    loadingModelId = null,
+                                    errorMessage = "Failed to delete model: ${error.message}"
+                                )
+                            }
+                        }
                     )
+                } catch (e: Exception) {
+                    _uiState.update {
+                        it.copy(
+                            loadingModelId = null,
+                            errorMessage = "Error deleting model: ${e.message}"
+                        )
+                    }
                 }
             }
         }
+    }
+    
+    fun cancelDeleteModel() {
+        _uiState.update {
+            it.copy(
+                showDeleteConfirmationDialog = false,
+                modelToDelete = null
+            )
+        }
+    }
+    
+    fun showHuggingFaceTokenDialog() {
+        _uiState.update { it.copy(showHuggingFaceTokenDialog = true) }
+    }
+    
+    fun hideHuggingFaceTokenDialog() {
+        _uiState.update { 
+            it.copy(
+                showHuggingFaceTokenDialog = false,
+                pendingDownloadModel = null
+            ) 
+        }
+    }
+    
+    fun submitHuggingFaceToken(token: String) {
+        huggingFaceAuth.storeAccessToken(token)
+        _uiState.update { 
+            it.copy(
+                showHuggingFaceTokenDialog = false,
+                isHuggingFaceAuthenticated = true
+            ) 
+        }
+        
+        // If there's a pending download, proceed with it
+        val pendingModel = _uiState.value.pendingDownloadModel
+        if (pendingModel != null) {
+            _uiState.update { it.copy(pendingDownloadModel = null) }
+            downloadModel(pendingModel)
+        }
+    }
+    
+    fun openHuggingFaceTokenPage() {
+        viewModelScope.launch {
+            try {
+                huggingFaceAuth.authenticate()
+            } catch (e: Exception) {
+                // Expected - this opens the browser
+            }
+        }
+    }
+    
+    fun signOutHuggingFace() {
+        huggingFaceAuth.signOut()
+        _uiState.update { it.copy(isHuggingFaceAuthenticated = false) }
     }
     
     fun deleteChatSession(sessionId: String) {
@@ -693,6 +849,112 @@ class MainViewModel(
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(errorMessage = "Error deleting chat session: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    fun showHuggingFaceSettingsDialog() {
+        _uiState.update { it.copy(showHuggingFaceSettingsDialog = true) }
+    }
+    
+    fun hideHuggingFaceSettingsDialog() {
+        _uiState.update { it.copy(showHuggingFaceSettingsDialog = false) }
+    }
+    
+    fun showCustomUrlDialog() {
+        _uiState.update { it.copy(showCustomUrlDialog = true) }
+    }
+    
+    fun hideCustomUrlDialog() {
+        _uiState.update { 
+            it.copy(
+                showCustomUrlDialog = false,
+                customUrlInput = "",
+                isDownloadingCustomUrl = false
+            ) 
+        }
+    }
+    
+    fun updateCustomUrlInput(url: String) {
+        _uiState.update { it.copy(customUrlInput = url) }
+    }
+    
+    fun saveHuggingFaceToken(token: String) {
+        huggingFaceAuth.saveAccessToken(token)
+        checkHuggingFaceAuthentication()
+        hideHuggingFaceSettingsDialog()
+        
+        // If there was a pending download, proceed with it
+        _uiState.value.pendingDownloadModel?.let { model ->
+            downloadModel(model)
+        }
+    }
+    
+    fun removeHuggingFaceToken() {
+        huggingFaceAuth.clearAccessToken()
+        checkHuggingFaceAuthentication()
+        hideHuggingFaceSettingsDialog()
+    }
+    
+    fun downloadFromCustomUrl(url: String, name: String, description: String) {
+        viewModelScope.launch {
+            _uiState.update { 
+                it.copy(
+                    isDownloadingCustomUrl = true,
+                    downloadProgress = 0f
+                ) 
+            }
+            
+            try {
+                // Use the addModel method which can handle URLs
+                val result = llmRepository.addModel(url, name, description)
+                result.fold(
+                    onSuccess = { model ->
+                        val models = llmRepository.getAvailableModels()
+                        _uiState.update {
+                            it.copy(
+                                availableModels = models,
+                                isDownloadingCustomUrl = false,
+                                showCustomUrlDialog = false,
+                                customUrlInput = "",
+                                downloadProgress = 0f
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        // Don't show error for cancellation
+                        if (error !is CancellationException) {
+                            _uiState.update {
+                                it.copy(
+                                    isDownloadingCustomUrl = false,
+                                    errorMessage = "Failed to download from URL: ${error.message}"
+                                )
+                            }
+                        } else {
+                            _uiState.update {
+                                it.copy(
+                                    isDownloadingCustomUrl = false
+                                )
+                            }
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                // Don't show error for cancellation
+                if (e !is CancellationException) {
+                    _uiState.update {
+                        it.copy(
+                            isDownloadingCustomUrl = false,
+                            errorMessage = "Error downloading from URL: ${e.message}"
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            isDownloadingCustomUrl = false
+                        )
+                    }
                 }
             }
         }

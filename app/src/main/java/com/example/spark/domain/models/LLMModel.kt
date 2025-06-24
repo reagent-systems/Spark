@@ -64,7 +64,8 @@ data class AvailableModel(
     val author: String = "LiteRT Community",
     val isRecommended: Boolean = false,
     val tags: List<String> = emptyList(),
-    val requirements: ModelRequirements? = null
+    val requirements: ModelRequirements? = null,
+    val needsHuggingFaceAuth: Boolean = false
 )
 
 @Serializable
