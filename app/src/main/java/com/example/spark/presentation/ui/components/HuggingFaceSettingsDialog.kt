@@ -21,10 +21,14 @@ import androidx.compose.ui.window.DialogProperties
 fun HuggingFaceSettingsDialog(
     isAuthenticated: Boolean,
     currentToken: String?,
+    currentVersion: String = "v1.0.0",
+    lastChecked: String = "Never",
+    isCheckingForUpdates: Boolean = false,
     onDismiss: () -> Unit,
     onSaveToken: (String) -> Unit,
     onRemoveToken: () -> Unit,
-    onOpenTokenPage: () -> Unit
+    onOpenTokenPage: () -> Unit,
+    onCheckForUpdates: () -> Unit = {}
 ) {
     var tokenInput by remember { mutableStateOf("") }
     var showToken by remember { mutableStateOf(false) }
@@ -203,6 +207,80 @@ fun HuggingFaceSettingsDialog(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Open HuggingFace Token Page")
+                        }
+                    }
+                }
+
+                // App Update Section
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "App Updates",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Medium
+                            )
+                            
+                            if (isCheckingForUpdates) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Current Version: $currentVersion",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Last checked: $lastChecked",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            OutlinedButton(
+                                onClick = onCheckForUpdates,
+                                enabled = !isCheckingForUpdates,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(if (isCheckingForUpdates) "Checking..." else "Check for Updates")
+                            }
                         }
                     }
                 }

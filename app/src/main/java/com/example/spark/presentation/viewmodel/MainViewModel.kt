@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.spark.domain.models.*
 import com.example.spark.domain.repository.LLMRepository
+import com.example.spark.domain.repository.UpdateRepository
 import com.example.spark.network.server.ApiServer
 import com.example.spark.utils.HuggingFaceAuth
 import kotlinx.coroutines.flow.*
@@ -47,11 +48,21 @@ data class MainUiState(
     val customUrlInput: String = "",
     val isDownloadingCustomUrl: Boolean = false,
     val showDeleteConfirmationDialog: Boolean = false,
-    val modelToDelete: LLMModel? = null
+    val modelToDelete: LLMModel? = null,
+    // Update-related state
+    val showUpdateDialog: Boolean = false,
+    val showChangelogDialog: Boolean = false,
+    val availableUpdate: UpdateInfo? = null,
+    val isCheckingForUpdates: Boolean = false,
+    val updateError: String? = null,
+    val lastUpdateCheck: String = "Never",
+    val isDownloadingUpdate: Boolean = false,
+    val updateDownloadProgress: Float = 0f
 )
 
 class MainViewModel(
     private val llmRepository: LLMRepository,
+    private val updateRepository: UpdateRepository,
     private val apiServer: ApiServer,
     private val context: Context,
     private val huggingFaceAuth: HuggingFaceAuth
@@ -62,6 +73,7 @@ class MainViewModel(
     val modelDownloadViewModel = ModelDownloadViewModel(llmRepository, huggingFaceAuth)
     val chatViewModel = ChatViewModel(llmRepository)
     val serverViewModel = ServerViewModel(llmRepository, apiServer, context)
+    val updateViewModel = UpdateViewModel(updateRepository, context)
     
     // Use dedicated scope for background operations
     private val backgroundScope = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob() + Dispatchers.Default)
@@ -104,8 +116,9 @@ class MainViewModel(
                 modelManagementViewModel.uiState,
                 modelDownloadViewModel.uiState,
                 chatViewModel.uiState,
-                serverViewModel.uiState
-            ) { modelMgmt, download, chat, server ->
+                serverViewModel.uiState,
+                updateViewModel.uiState
+            ) { modelMgmt, download, chat, server, update ->
                 MainUiState(
                     availableModels = modelMgmt.availableModels,
                     loadedModels = modelMgmt.loadedModels,
@@ -134,7 +147,16 @@ class MainViewModel(
                     customUrlInput = download.customUrlInput,
                     isDownloadingCustomUrl = download.isDownloadingCustomUrl,
                     showDeleteConfirmationDialog = modelMgmt.showDeleteConfirmationDialog,
-                    modelToDelete = modelMgmt.modelToDelete
+                    modelToDelete = modelMgmt.modelToDelete,
+                    // Update-related state
+                    showUpdateDialog = update.showUpdateDialog,
+                    showChangelogDialog = update.showChangelogDialog,
+                    availableUpdate = update.availableUpdate,
+                    isCheckingForUpdates = update.isCheckingForUpdates,
+                    updateError = update.error,
+                    lastUpdateCheck = update.lastChecked,
+                    isDownloadingUpdate = update.isDownloading,
+                    updateDownloadProgress = update.downloadProgress
                 )
             }
             .distinctUntilChanged()
@@ -279,4 +301,14 @@ class MainViewModel(
         huggingFaceAuth.signOut()
         modelDownloadViewModel.removeHuggingFaceToken()
     }
+    
+    // Update delegation methods
+    fun checkForUpdates() = updateViewModel.checkForUpdates()
+    fun downloadAndInstallUpdate() = updateViewModel.downloadAndInstallUpdate()
+    fun cancelUpdateDownload() = updateViewModel.cancelDownload()
+    fun showUpdateDialog() = updateViewModel.showUpdateDialog()
+    fun hideUpdateDialog() = updateViewModel.hideUpdateDialog()
+    fun showChangelogDialog() = updateViewModel.showChangelogDialog()
+    fun hideChangelogDialog() = updateViewModel.hideChangelogDialog()
+    fun dismissUpdateError() = updateViewModel.dismissError()
 } 

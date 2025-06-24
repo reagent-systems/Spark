@@ -1,5 +1,6 @@
 package com.example.spark
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -22,6 +23,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.spark.data.repository.LLMRepositoryImpl
+import com.example.spark.data.repository.UpdateRepositoryImpl
 import com.example.spark.network.server.ApiServer
 import com.example.spark.presentation.ui.screens.*
 import com.example.spark.presentation.ui.components.ModelLoadingDialog
@@ -29,6 +31,8 @@ import com.example.spark.presentation.ui.components.HuggingFaceTokenDialog
 import com.example.spark.presentation.ui.components.HuggingFaceSettingsDialog
 import com.example.spark.presentation.ui.components.CustomUrlDownloadDialog
 import com.example.spark.presentation.ui.components.DeleteModelConfirmationDialog
+import com.example.spark.presentation.ui.components.UpdateDialog
+import com.example.spark.presentation.ui.components.ChangelogDialog
 import com.example.spark.presentation.viewmodel.MainViewModel
 import com.example.spark.ui.theme.SparkTheme
 import com.example.spark.utils.HuggingFaceAuth
@@ -47,19 +51,21 @@ class MainActivity : ComponentActivity() {
         
         // Initialize dependencies
         val llmRepository = LLMRepositoryImpl(this, huggingFaceAuth)
+        val updateRepository = UpdateRepositoryImpl(this)
         val apiServer = ApiServer(this, llmRepository)
-        viewModel = MainViewModel(llmRepository, apiServer, this, huggingFaceAuth)
+        viewModel = MainViewModel(llmRepository, updateRepository, apiServer, this, huggingFaceAuth)
         
         setContent {
             SparkTheme {
-                SparkApp(
-                    viewModel = viewModel,
-                    huggingFaceAuth = huggingFaceAuth,
-                    onOpenUrl = { url ->
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                        startActivity(intent)
-                    }
-                )
+                            SparkApp(
+                viewModel = viewModel,
+                huggingFaceAuth = huggingFaceAuth,
+                onOpenUrl = { url ->
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    startActivity(intent)
+                },
+                context = this
+            )
             }
         }
     }
@@ -78,7 +84,8 @@ class MainActivity : ComponentActivity() {
 fun SparkApp(
     viewModel: MainViewModel,
     huggingFaceAuth: HuggingFaceAuth,
-    onOpenUrl: (String) -> Unit
+    onOpenUrl: (String) -> Unit,
+    context: Context
 ) {
     val navController = rememberNavController()
     
@@ -174,10 +181,21 @@ fun SparkApp(
             HuggingFaceSettingsDialog(
                 isAuthenticated = uiState.isHuggingFaceAuthenticated,
                 currentToken = if (uiState.isHuggingFaceAuthenticated) huggingFaceAuth.getAccessToken() else null,
+                currentVersion = remember {
+                    try {
+                        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                        "v${packageInfo.versionName}"
+                    } catch (e: Exception) {
+                        "v1.0.0"
+                    }
+                },
+                lastChecked = uiState.lastUpdateCheck,
+                isCheckingForUpdates = uiState.isCheckingForUpdates,
                 onDismiss = viewModel::hideHuggingFaceSettingsDialog,
                 onSaveToken = viewModel::saveHuggingFaceToken,
                 onRemoveToken = viewModel::removeHuggingFaceToken,
-                onOpenTokenPage = { onOpenUrl("https://huggingface.co/settings/tokens") }
+                onOpenTokenPage = { onOpenUrl("https://huggingface.co/settings/tokens") },
+                onCheckForUpdates = viewModel::checkForUpdates
             )
         }
 
@@ -201,6 +219,31 @@ fun SparkApp(
                 onDismiss = viewModel::cancelDeleteModel,
                 onConfirm = viewModel::confirmDeleteModel
             )
+        }
+
+        // Update Dialog
+        if (uiState.showUpdateDialog) {
+            uiState.availableUpdate?.let { updateInfo ->
+                UpdateDialog(
+                    updateInfo = updateInfo,
+                    isDownloading = uiState.isDownloadingUpdate,
+                    downloadProgress = uiState.updateDownloadProgress,
+                    onUpdate = viewModel::downloadAndInstallUpdate,
+                    onSkip = viewModel::hideUpdateDialog,
+                    onViewChangelog = viewModel::showChangelogDialog,
+                    onDismiss = viewModel::hideUpdateDialog
+                )
+            }
+        }
+
+        // Changelog Dialog
+        if (uiState.showChangelogDialog) {
+            uiState.availableUpdate?.let { updateInfo ->
+                ChangelogDialog(
+                    updateInfo = updateInfo,
+                    onDismiss = viewModel::hideChangelogDialog
+                )
+            }
         }
         
         NavHost(
