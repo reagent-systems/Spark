@@ -65,18 +65,15 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
-    // Auto-scroll to bottom when new messages arrive or content changes
-    LaunchedEffect(currentChatSession?.messages?.size, currentChatSession?.messages?.lastOrNull()?.content) {
+    // Auto-scroll to bottom when new messages arrive (but not on content changes)
+    LaunchedEffect(currentChatSession?.messages?.size) {
         if (currentChatSession?.messages?.isNotEmpty() == true) {
             coroutineScope.launch {
                 try {
-                    listState.animateScrollToItem(
-                        index = currentChatSession.messages.size - 1,
-                        scrollOffset = 0
-                    )
-                } catch (e: Exception) {
-                    // Fallback to instant scroll if animation fails
+                    // Use instant scroll instead of animation for better performance
                     listState.scrollToItem(currentChatSession.messages.size - 1)
+                } catch (e: Exception) {
+                    // Ignore scroll errors
                 }
             }
         }
@@ -116,15 +113,20 @@ fun ChatScreen(
                             maxLines = 1
                         )
                         if (currentChatSession != null) {
-                            val modelName = (loadedModels + availableModels).find { it.id == currentChatSession.modelId }?.name ?: "Unknown Model"
+                            val modelName = remember(currentChatSession.modelId, loadedModels, availableModels) {
+                                (loadedModels + availableModels).find { it.id == currentChatSession.modelId }?.name ?: "Unknown Model"
+                            }
                             Text(
                                 text = modelName,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1
                             )
+                            val configText = remember(modelConfig) {
+                                "T:${modelConfig.temperature} • K:${modelConfig.topK} • ${modelConfig.maxTokens}tok • CPU"
+                            }
                             Text(
-                                text = "T:${modelConfig.temperature} • K:${modelConfig.topK} • ${modelConfig.maxTokens}tok • CPU",
+                                text = configText,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 maxLines = 1
@@ -152,8 +154,11 @@ fun ChatScreen(
                                 )
                             }
                             // Show indicator if config is modified from defaults
-                            val defaultConfig = ModelConfig()
-                            if (modelConfig != defaultConfig) {
+                            val isConfigModified = remember(modelConfig) {
+                                val defaultConfig = ModelConfig()
+                                modelConfig != defaultConfig
+                            }
+                            if (isConfigModified) {
                                 Box(
                                     modifier = Modifier
                                         .size(8.dp)

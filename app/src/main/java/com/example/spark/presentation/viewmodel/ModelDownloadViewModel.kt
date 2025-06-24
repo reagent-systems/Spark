@@ -19,8 +19,10 @@ class ModelDownloadViewModel(
     val uiState: StateFlow<ModelDownloadUiState> = _uiState.asStateFlow()
     
     init {
-        loadDownloadableModels()
+        // Initialize authentication check immediately (lightweight)
         checkHuggingFaceAuthentication()
+        // Load downloadable models from CDN
+        loadDownloadableModels()
     }
     
     private fun checkHuggingFaceAuthentication() {

@@ -12,6 +12,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -36,11 +38,18 @@ class LLMRepositoryImpl(
     private val fileManager = ModelFileManager(context)
     
     init {
-        // Load persisted models first, then initialize any new models found
+        // Load persisted models synchronously for immediate availability
         loadPersistedModels()
-        initializeDefaultModels()
-        // Load persisted chat sessions
         loadPersistedChatSessions()
+        
+        // Initialize default models asynchronously (this involves file scanning)
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                initializeDefaultModels()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during default model initialization", e)
+            }
+        }
     }
     
     private fun initializeDefaultModels() {

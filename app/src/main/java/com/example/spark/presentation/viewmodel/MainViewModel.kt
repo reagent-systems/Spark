@@ -101,7 +101,9 @@ class MainViewModel(
                     showDeleteConfirmationDialog = modelMgmt.showDeleteConfirmationDialog,
                     modelToDelete = modelMgmt.modelToDelete
                 )
-            }.collect { combinedState ->
+            }
+            .distinctUntilChanged() // Only emit when state actually changes
+            .collect { combinedState ->
                 _uiState.value = combinedState
             }
         }

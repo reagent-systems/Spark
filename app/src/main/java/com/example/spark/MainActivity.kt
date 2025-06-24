@@ -102,11 +102,13 @@ fun SparkApp(
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentDestination = navBackStackEntry?.destination
                 
-                val items = listOf(
-                    BottomNavItem("models", "Models", Icons.Default.Storage),
-                    BottomNavItem("chat", "Chat", Icons.AutoMirrored.Filled.Chat),
-                    BottomNavItem("server", "Server", Icons.Default.Api)
-                )
+                val items = remember {
+                    listOf(
+                        BottomNavItem("models", "Models", Icons.Default.Storage),
+                        BottomNavItem("chat", "Chat", Icons.AutoMirrored.Filled.Chat),
+                        BottomNavItem("server", "Server", Icons.Default.Api)
+                    )
+                }
                 
                 items.forEach { item ->
                     NavigationBarItem(
