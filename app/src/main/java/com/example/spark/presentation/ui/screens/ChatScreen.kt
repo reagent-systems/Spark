@@ -6,14 +6,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
-import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.*
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.ui.draw.scale
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -26,10 +28,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
@@ -38,6 +43,8 @@ import com.example.spark.domain.models.LLMModel
 import com.example.spark.domain.models.ModelConfig
 import com.example.spark.presentation.ui.components.ChatBubble
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,15 +72,34 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
+    // Local text state to prevent cursor jumping issues
+    var localTextInput by remember { mutableStateOf("") }
+    
+    // Sync local state with ViewModel state when currentMessage changes (like when cleared after sending)
+    LaunchedEffect(currentMessage) {
+        localTextInput = currentMessage
+    }
+    
+    // Sync local state when chat session changes (when loading past chats)
+    LaunchedEffect(currentChatSession?.id) {
+        localTextInput = currentMessage
+    }
+    
     // Auto-scroll to bottom when new messages arrive (but not on content changes)
     LaunchedEffect(currentChatSession?.messages?.size) {
         if (currentChatSession?.messages?.isNotEmpty() == true) {
-            coroutineScope.launch {
-                try {
-                    // Use instant scroll instead of animation for better performance
-                    listState.scrollToItem(currentChatSession.messages.size - 1)
-                } catch (e: Exception) {
-                    // Ignore scroll errors
+            // Use background dispatcher for scroll calculation
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                val messageCount = currentChatSession.messages.size
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                    coroutineScope.launch {
+                        try {
+                            // Use instant scroll instead of animation for better performance
+                            listState.scrollToItem(messageCount - 1)
+                        } catch (e: Exception) {
+                            // Ignore scroll errors
+                        }
+                    }
                 }
             }
         }
@@ -96,7 +122,7 @@ fun ChatScreen(
                             maxLines = 1
                         )
                         if (currentChatSession != null) {
-                            val modelName = remember(currentChatSession.modelId, loadedModels, availableModels) {
+                            val modelName = remember(currentChatSession.modelId, loadedModels.size, availableModels.size) {
                                 (loadedModels + availableModels).find { it.id == currentChatSession.modelId }?.name ?: "Unknown Model"
                             }
                             Text(
@@ -105,7 +131,7 @@ fun ChatScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1
                             )
-                            val configText = remember(modelConfig) {
+                            val configText = remember(modelConfig.temperature, modelConfig.topK, modelConfig.maxTokens) {
                                 "T:${modelConfig.temperature} • K:${modelConfig.topK} • ${modelConfig.maxTokens}tok • CPU"
                             }
                             Text(
@@ -137,9 +163,12 @@ fun ChatScreen(
                                 )
                             }
                             // Show indicator if config is modified from defaults
-                            val isConfigModified = remember(modelConfig) {
+                            val isConfigModified = remember(modelConfig.temperature, modelConfig.topK, modelConfig.maxTokens, modelConfig.randomSeed) {
                                 val defaultConfig = ModelConfig()
-                                modelConfig != defaultConfig
+                                modelConfig.temperature != defaultConfig.temperature ||
+                                modelConfig.topK != defaultConfig.topK ||
+                                modelConfig.maxTokens != defaultConfig.maxTokens ||
+                                modelConfig.randomSeed != defaultConfig.randomSeed
                             }
                             if (isConfigModified) {
                                 Box(
@@ -258,44 +287,58 @@ fun ChatScreen(
                             .weight(1f)
                             .fillMaxWidth(),
                         contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        reverseLayout = false
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        // Performance optimizations
+                        userScrollEnabled = true
                     ) {
-                        items(currentChatSession.messages) { message ->
-                            ChatBubble(message = message)
+                        currentChatSession?.messages?.let { messages ->
+                            items(
+                                items = messages,
+                                key = { message -> "${message.id}_${message.timestamp}" }, // Stable key
+                                contentType = { message -> if (message.isUser) "UserMessage" else "AIMessage" }
+                            ) { message ->
+                                // Use comprehensive key to prevent unnecessary recompositions
+                                key("msg_${message.id}_${message.content.hashCode()}_${message.isUser}") {
+                                    ChatBubble(
+                                        message = message,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
                         }
                         
-                        // Show typing indicator only if generating and no partial response yet
-                        if (isGenerating && (currentChatSession.messages.lastOrNull()?.isUser == true || 
-                            currentChatSession.messages.lastOrNull()?.content?.isBlank() == true)) {
-                            item {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.Start
-                                ) {
-                                    Card(
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                                        ),
-                                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                                        shape = RoundedCornerShape(
-                                            topStart = 18.dp,
-                                            topEnd = 18.dp,
-                                            bottomStart = 6.dp,
-                                            bottomEnd = 18.dp
-                                        )
+                        // Show typing indicator when generating
+                        if (isGenerating) {
+                            item(key = "typing_indicator", contentType = "TypingIndicator") {
+                                key("typing_${isGenerating}") {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.Start
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(16.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            TypingIndicator()
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = "AI is thinking...",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        Card(
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                            ),
+                                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                                            shape = RoundedCornerShape(
+                                                topStart = 18.dp,
+                                                topEnd = 18.dp,
+                                                bottomStart = 6.dp,
+                                                bottomEnd = 18.dp
                                             )
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(16.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                TypingIndicator()
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = "AI is thinking...",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -315,30 +358,48 @@ fun ChatScreen(
                             verticalAlignment = Alignment.Bottom
                         ) {
                             OutlinedTextField(
-                                value = currentMessage,
-                                onValueChange = onUpdateCurrentMessage,
+                                value = localTextInput,
+                                onValueChange = { newText ->
+                                    localTextInput = newText
+                                    // Immediately sync to ViewModel for fast typing support
+                                    onUpdateCurrentMessage(newText)
+                                },
                                 placeholder = { Text("Type a message...") },
                                 modifier = Modifier
                                     .weight(1f)
                                     .padding(end = 12.dp),
                                 maxLines = 4,
                                 enabled = !isGenerating,
-                                shape = RoundedCornerShape(24.dp)
+                                shape = RoundedCornerShape(24.dp),
+                                // Optimize text input performance
+                                singleLine = false,
+                                keyboardOptions = KeyboardOptions(
+                                    imeAction = ImeAction.Send,
+                                    keyboardType = KeyboardType.Text,
+                                    capitalization = KeyboardCapitalization.Sentences
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onSend = {
+                                        if (!isGenerating && localTextInput.isNotBlank()) {
+                                            onSendMessage(localTextInput)
+                                        }
+                                    }
+                                )
                             )
                             
                             FloatingActionButton(
                                 onClick = {
                                     if (isGenerating) {
                                         onStopGeneration()
-                                    } else if (currentMessage.isNotBlank()) {
-                                        onSendMessage(currentMessage)
+                                    } else if (localTextInput.isNotBlank()) {
+                                        onSendMessage(localTextInput)
                                         // Input field is cleared by the ViewModel
                                     }
                                 },
                                 modifier = Modifier.size(48.dp),
                                 containerColor = when {
                                     isGenerating -> MaterialTheme.colorScheme.error
-                                    currentMessage.isBlank() -> MaterialTheme.colorScheme.surfaceVariant
+                                    localTextInput.isBlank() -> MaterialTheme.colorScheme.surfaceVariant
                                     else -> MaterialTheme.colorScheme.primary
                                 }
                             ) {
@@ -354,7 +415,7 @@ fun ChatScreen(
                                         Icon(
                                             Icons.AutoMirrored.Filled.Send,
                                             contentDescription = "Send",
-                                            tint = if (currentMessage.isBlank()) 
+                                            tint = if (localTextInput.isBlank()) 
                                                 MaterialTheme.colorScheme.onSurfaceVariant 
                                             else 
                                                 MaterialTheme.colorScheme.onPrimary

@@ -17,9 +17,14 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import java.util.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 class ApiServer(
     private val context: Context,
@@ -27,7 +32,13 @@ class ApiServer(
     private val port: Int = 8080
 ) {
     private var server: NettyApplicationEngine? = null
-    private val scope = CoroutineScope(Dispatchers.IO)
+    
+    // Use dedicated scope for server operations to prevent blocking
+    private val serverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val serverMutex = Mutex()
+    private val isStarting = AtomicBoolean(false)
+    private val isStopping = AtomicBoolean(false)
+    
     private var defaultModelConfig: ModelConfig = ModelConfig()
     
     fun updateDefaultModelConfig(config: ModelConfig) {
@@ -37,10 +48,21 @@ class ApiServer(
     
     fun getDefaultModelConfig(): ModelConfig = defaultModelConfig
     
-    fun start() {
-        scope.launch {
+    suspend fun start() = withContext(Dispatchers.IO) {
+        serverMutex.withLock {
+            if (server != null) {
+                Log.d("ApiServer", "Server already running")
+                return@withLock
+            }
+            
+            if (isStarting.getAndSet(true)) {
+                Log.d("ApiServer", "Server already starting")
+                return@withLock
+            }
+            
             try {
                 Log.d("ApiServer", "Starting API server on port $port")
+                
                 server = embeddedServer(Netty, port = port, host = "0.0.0.0") {
                     install(ContentNegotiation) {
                         json(Json {
@@ -72,7 +94,12 @@ class ApiServer(
                         get("/v1/models") {
                             try {
                                 Log.d("ApiServer", "GET /v1/models endpoint called")
-                                val models = llmRepository.getLoadedModels()
+                                
+                                // Use background dispatcher for model operations
+                                val models = withContext(Dispatchers.Default) {
+                                    llmRepository.getLoadedModels()
+                                }
+                                
                                 Log.d("ApiServer", "Found ${models.size} loaded models")
                                 val modelInfos = models.map { model ->
                                     ModelInfo(
@@ -95,8 +122,12 @@ class ApiServer(
                             try {
                                 val request = call.receive<ChatCompletionRequest>()
                                 
-                                // Check if model is loaded
-                                if (!llmRepository.isModelLoaded(request.model)) {
+                                // Use background dispatcher for model operations
+                                val isModelLoaded = withContext(Dispatchers.Default) {
+                                    llmRepository.isModelLoaded(request.model)
+                                }
+                                
+                                if (!isModelLoaded) {
                                     call.respond(
                                         HttpStatusCode.BadRequest,
                                         ErrorResponse(ErrorDetail("Model not found or not loaded", "model_not_found"))
@@ -116,11 +147,14 @@ class ApiServer(
                                     randomSeed = defaultModelConfig.randomSeed
                                 )
                                 
-                                val result = llmRepository.generateResponseSync(
-                                    request.model,
-                                    prompt,
-                                    config
-                                )
+                                // Generate response on background dispatcher
+                                val result = withContext(Dispatchers.Default) {
+                                    llmRepository.generateResponseSync(
+                                        request.model,
+                                        prompt,
+                                        config
+                                    )
+                                }
                                 
                                 result.fold(
                                     onSuccess = { response ->
@@ -155,13 +189,16 @@ class ApiServer(
                             }
                         }
                         
-                        // Custom endpoints for model management
+                        // Spark-specific endpoints
                         get("/spark/models") {
                             try {
-                                val models = llmRepository.getAvailableModels()
+                                // Use background dispatcher for model operations
+                                val models = withContext(Dispatchers.Default) {
+                                    llmRepository.getAvailableModels()
+                                }
                                 call.respond(models)
                             } catch (e: Exception) {
-                                Log.e("ApiServer", "Error getting all models", e)
+                                Log.e("ApiServer", "Error getting available models", e)
                                 call.respond(
                                     HttpStatusCode.InternalServerError,
                                     ErrorResponse(ErrorDetail("Internal server error", "server_error"))
@@ -171,61 +208,64 @@ class ApiServer(
                         
                         post("/spark/models/{modelId}/load") {
                             try {
-                                val modelId = call.parameters["modelId"] ?: return@post call.respond(
-                                    HttpStatusCode.BadRequest,
-                                    ErrorResponse(ErrorDetail("Model ID required", "bad_request"))
-                                )
+                                val modelId = call.parameters["modelId"] ?: throw IllegalArgumentException("Missing modelId")
                                 
-                                val result = llmRepository.loadModel(modelId)
+                                // Load model on background dispatcher
+                                val result = withContext(Dispatchers.Default) {
+                                    llmRepository.loadModel(modelId, defaultModelConfig)
+                                }
+                                
                                 result.fold(
                                     onSuccess = {
                                         call.respond(mapOf("status" to "loaded", "modelId" to modelId))
                                     },
                                     onFailure = { error ->
+                                        Log.e("ApiServer", "Error loading model: $modelId", error)
                                         call.respond(
-                                            HttpStatusCode.BadRequest,
+                                            HttpStatusCode.InternalServerError,
                                             ErrorResponse(ErrorDetail(error.message ?: "Failed to load model", "load_error"))
                                         )
                                     }
                                 )
                             } catch (e: Exception) {
-                                Log.e("ApiServer", "Error loading model", e)
+                                Log.e("ApiServer", "Error in model loading endpoint", e)
                                 call.respond(
-                                    HttpStatusCode.InternalServerError,
-                                    ErrorResponse(ErrorDetail("Internal server error", "server_error"))
+                                    HttpStatusCode.BadRequest,
+                                    ErrorResponse(ErrorDetail("Invalid request", "bad_request"))
                                 )
                             }
                         }
                         
                         post("/spark/models/{modelId}/unload") {
                             try {
-                                val modelId = call.parameters["modelId"] ?: return@post call.respond(
-                                    HttpStatusCode.BadRequest,
-                                    ErrorResponse(ErrorDetail("Model ID required", "bad_request"))
-                                )
+                                val modelId = call.parameters["modelId"] ?: throw IllegalArgumentException("Missing modelId")
                                 
-                                val result = llmRepository.unloadModel(modelId)
+                                // Unload model on background dispatcher
+                                val result = withContext(Dispatchers.Default) {
+                                    llmRepository.unloadModel(modelId)
+                                }
+                                
                                 result.fold(
                                     onSuccess = {
                                         call.respond(mapOf("status" to "unloaded", "modelId" to modelId))
                                     },
                                     onFailure = { error ->
+                                        Log.e("ApiServer", "Error unloading model: $modelId", error)
                                         call.respond(
-                                            HttpStatusCode.BadRequest,
+                                            HttpStatusCode.InternalServerError,
                                             ErrorResponse(ErrorDetail(error.message ?: "Failed to unload model", "unload_error"))
                                         )
                                     }
                                 )
                             } catch (e: Exception) {
-                                Log.e("ApiServer", "Error unloading model", e)
+                                Log.e("ApiServer", "Error in model unloading endpoint", e)
                                 call.respond(
-                                    HttpStatusCode.InternalServerError,
-                                    ErrorResponse(ErrorDetail("Internal server error", "server_error"))
+                                    HttpStatusCode.BadRequest,
+                                    ErrorResponse(ErrorDetail("Invalid request", "bad_request"))
                                 )
                             }
                         }
                         
-                        // Model configuration endpoints
                         get("/spark/config") {
                             try {
                                 call.respond(defaultModelConfig)
@@ -257,18 +297,42 @@ class ApiServer(
                 Log.i("ApiServer", "API Server started on port $port")
             } catch (e: Exception) {
                 Log.e("ApiServer", "Failed to start API server", e)
+                server = null
+                throw e
+            } finally {
+                isStarting.set(false)
             }
         }
     }
     
-    fun stop() {
-        server?.stop(1000, 2000)
-        server = null
-        Log.i("ApiServer", "API Server stopped")
+    suspend fun stop() = withContext(Dispatchers.IO) {
+        serverMutex.withLock {
+            if (server == null) {
+                Log.d("ApiServer", "Server not running")
+                return@withLock
+            }
+            
+            if (isStopping.getAndSet(true)) {
+                Log.d("ApiServer", "Server already stopping")
+                return@withLock
+            }
+            
+            try {
+                Log.d("ApiServer", "Stopping API server")
+                server?.stop(1000, 2000)
+                server = null
+                Log.i("ApiServer", "API Server stopped")
+            } catch (e: Exception) {
+                Log.e("ApiServer", "Error stopping server", e)
+                throw e
+            } finally {
+                isStopping.set(false)
+            }
+        }
     }
     
     fun isRunning(): Boolean {
-        return server != null
+        return server != null && !isStarting.get() && !isStopping.get()
     }
     
     fun getPort(): Int = port
@@ -283,4 +347,4 @@ class ApiServer(
             }
         } + "\n\nAssistant:"
     }
-} 
+}

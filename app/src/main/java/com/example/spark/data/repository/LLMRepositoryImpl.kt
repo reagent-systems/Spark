@@ -14,9 +14,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import java.io.File
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+
+@OptIn(ExperimentalCoroutinesApi::class)
 
 class LLMRepositoryImpl(
     private val context: Context,
@@ -27,10 +32,18 @@ class LLMRepositoryImpl(
         private const val TAG = "LLMRepositoryImpl"
     }
     
+    // Use dedicated dispatchers for different types of operations to prevent blocking
+    private val modelLoadingDispatcher = Dispatchers.IO.limitedParallelism(1) // Single thread for MediaPipe model loading
+    private val fileOperationsDispatcher = Dispatchers.IO.limitedParallelism(2) // Limited threads for file ops
+    private val inferenceDispatcher = Dispatchers.Default // Use Default for CPU-intensive inference
+    
     private val loadedModels = ConcurrentHashMap<String, LlmInference>()
     private val availableModels = mutableListOf<LLMModel>()
     private val chatSessions = mutableListOf<ChatSession>()
     private val modelMutex = Mutex()
+    
+    // Background scope for non-UI operations
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     // Delegate managers
     private val persistenceManager = ModelPersistenceManager(context)
@@ -42,8 +55,8 @@ class LLMRepositoryImpl(
         loadPersistedModels()
         loadPersistedChatSessions()
         
-        // Initialize default models asynchronously (this involves file scanning)
-        CoroutineScope(Dispatchers.IO).launch {
+        // Initialize default models asynchronously in background scope
+        backgroundScope.launch {
             try {
                 initializeDefaultModels()
             } catch (e: Exception) {
@@ -52,7 +65,7 @@ class LLMRepositoryImpl(
         }
     }
     
-    private fun initializeDefaultModels() {
+    private suspend fun initializeDefaultModels() = withContext(fileOperationsDispatcher) {
         val foundModels = persistenceManager.initializeDefaultModels()
         foundModels.forEach { model ->
             // Check if this model is already in our list (from persistence)
@@ -73,7 +86,8 @@ class LLMRepositoryImpl(
         return availableModels.toList()
     }
     
-    override suspend fun loadModel(modelId: String, config: ModelConfig): Result<Unit> = withContext(Dispatchers.IO) {
+    // MediaPipe model loading - this is the ONLY place where MediaPipe operations should happen
+    override suspend fun loadModel(modelId: String, config: ModelConfig): Result<Unit> = withContext(modelLoadingDispatcher) {
         Log.d(TAG, "Starting to load model: $modelId")
         return@withContext try {
             modelMutex.withLock {
@@ -92,7 +106,9 @@ class LLMRepositoryImpl(
                 
                 // Get the actual file path for MediaPipe
                 Log.d(TAG, "Getting actual file path for model: ${model.name}")
-                val actualFilePath = fileManager.getActualFilePath(model.filePath, model.name)
+                val actualFilePath = withContext(fileOperationsDispatcher) {
+                    fileManager.getActualFilePath(model.filePath, model.name)
+                }
                 Log.d(TAG, "Actual file path: $actualFilePath")
                 
                 Log.d(TAG, "Creating MediaPipe LlmInference with options...")
@@ -102,8 +118,8 @@ class LLMRepositoryImpl(
                     .setMaxTopK(model.topK)
                     .build()
                 
-                Log.d(TAG, "Creating LlmInference from options (this may take a while)...")
-                // This is the heavy operation that was blocking the UI
+                Log.d(TAG, "Creating LlmInference from options (this is the heavy MediaPipe operation)...")
+                // This is the ONLY heavy MediaPipe operation - properly isolated on dedicated dispatcher
                 val llmInference = LlmInference.createFromOptions(context, options)
                 loadedModels[modelId] = llmInference
                 
@@ -113,7 +129,11 @@ class LLMRepositoryImpl(
                     availableModels[index] = availableModels[index].copy(isLoaded = true)
                 }
                 
-                savePersistedModels() // Save to persistence
+                // Save to persistence in background to avoid blocking
+                backgroundScope.launch {
+                    savePersistedModels()
+                }
+                
                 Log.d(TAG, "Successfully loaded model: ${model.name}")
                 Result.success(Unit)
             }
@@ -123,7 +143,7 @@ class LLMRepositoryImpl(
         }
     }
     
-    override suspend fun unloadModel(modelId: String): Result<Unit> = withContext(Dispatchers.IO) {
+    override suspend fun unloadModel(modelId: String): Result<Unit> = withContext(modelLoadingDispatcher) {
         Log.d(TAG, "Starting to unload model: $modelId")
         return@withContext try {
             modelMutex.withLock {
@@ -144,7 +164,11 @@ class LLMRepositoryImpl(
                     Log.d(TAG, "Updated model status to unloaded: ${model.name}")
                 }
                 
-                savePersistedModels() // Save to persistence
+                // Save to persistence in background to avoid blocking
+                backgroundScope.launch {
+                    savePersistedModels()
+                }
+                
                 Log.d(TAG, "Successfully unloaded model: ${model.name}")
                 Result.success(Unit)
             }
@@ -154,6 +178,7 @@ class LLMRepositoryImpl(
         }
     }
     
+    // Remove fake streaming - MediaPipe doesn't support real streaming
     override suspend fun generateResponse(
         modelId: String,
         prompt: String,
@@ -163,14 +188,14 @@ class LLMRepositoryImpl(
             ?: throw Exception("Model not loaded")
         
         try {
-            // Get the complete response from MediaPipe
-            val result = withContext(Dispatchers.IO) {
+            // Use inference dispatcher for CPU-intensive text generation
+            val result = withContext(inferenceDispatcher) {
+                ensureActive() // Check for cancellation
                 llmInference.generateResponse(prompt)
             }
             
-            // Replace \n with actual newlines and emit the complete response
-            val formattedResult = result.replace("\n", "\n")
-            emit(formattedResult)
+            // Emit the complete response (no fake streaming)
+            emit(result)
         } catch (e: Exception) {
             throw e
         }
@@ -180,11 +205,12 @@ class LLMRepositoryImpl(
         modelId: String,
         prompt: String,
         config: ModelConfig
-    ): Result<String> {
-        return try {
+    ): Result<String> = withContext(inferenceDispatcher) {
+        return@withContext try {
             val llmInference = loadedModels[modelId]
-                ?: return Result.failure(Exception("Model not loaded"))
+                ?: return@withContext Result.failure(Exception("Model not loaded"))
             
+            ensureActive() // Check for cancellation
             val result = llmInference.generateResponse(prompt)
             Result.success(result)
         } catch (e: Exception) {
@@ -196,16 +222,16 @@ class LLMRepositoryImpl(
         filePath: String,
         name: String,
         description: String
-    ): Result<LLMModel> {
+    ): Result<LLMModel> = withContext(fileOperationsDispatcher) {
         Log.d(TAG, "Adding model: $name, path: $filePath")
-        return try {
+        return@withContext try {
             // Get file size
             val fileSize = fileManager.getFileSize(filePath)
             
             // Handle file path validation for regular files
             if (!filePath.startsWith("content://") && !fileManager.fileExists(filePath)) {
                 Log.e(TAG, "Model file does not exist: $filePath")
-                return Result.failure(Exception("Model file does not exist"))
+                return@withContext Result.failure(Exception("Model file does not exist"))
             }
             
             // Get actual file path (copy content URI if needed)
@@ -224,7 +250,12 @@ class LLMRepositoryImpl(
             )
             
             availableModels.add(model)
-            savePersistedModels() // Save to persistence
+            
+            // Save to persistence in background to avoid blocking
+            backgroundScope.launch {
+                savePersistedModels()
+            }
+            
             Log.d(TAG, "Successfully added model: $name with ID: ${model.id}")
             Result.success(model)
         } catch (e: Exception) {
@@ -233,8 +264,8 @@ class LLMRepositoryImpl(
         }
     }
     
-    override suspend fun removeModel(modelId: String): Result<Unit> {
-        return try {
+    override suspend fun removeModel(modelId: String): Result<Unit> = withContext(fileOperationsDispatcher) {
+        return@withContext try {
             // Unload if loaded
             if (loadedModels.containsKey(modelId)) {
                 unloadModel(modelId)
@@ -255,7 +286,7 @@ class LLMRepositoryImpl(
         return loadedModels.containsKey(modelId)
     }
     
-    override suspend fun createChatSession(name: String, modelId: String): ChatSession {
+    override suspend fun createChatSession(name: String, modelId: String): ChatSession = withContext(fileOperationsDispatcher) {
         val session = ChatSession(
             id = UUID.randomUUID().toString(),
             name = name,
@@ -265,8 +296,13 @@ class LLMRepositoryImpl(
             updatedAt = System.currentTimeMillis()
         )
         chatSessions.add(session)
-        savePersistedChatSessions() // Save to persistence
-        return session
+        
+        // Save to persistence in background to avoid blocking
+        backgroundScope.launch {
+            savePersistedChatSessions()
+        }
+        
+        return@withContext session
     }
     
     override suspend fun getChatSessions(): List<ChatSession> {
@@ -280,8 +316,8 @@ class LLMRepositoryImpl(
     override suspend fun addMessageToSession(
         sessionId: String,
         message: ChatMessage
-    ): Result<Unit> {
-        return try {
+    ): Result<Unit> = withContext(fileOperationsDispatcher) {
+        return@withContext try {
             val index = chatSessions.indexOfFirst { it.id == sessionId }
             if (index != -1) {
                 val session = chatSessions[index]
@@ -290,7 +326,12 @@ class LLMRepositoryImpl(
                     updatedAt = System.currentTimeMillis()
                 )
                 chatSessions[index] = updatedSession
-                savePersistedChatSessions() // Save to persistence
+                
+                // Save to persistence in background to avoid blocking
+                backgroundScope.launch {
+                    savePersistedChatSessions()
+                }
+                
                 Result.success(Unit)
             } else {
                 Result.failure(Exception("Chat session not found"))
@@ -300,12 +341,17 @@ class LLMRepositoryImpl(
         }
     }
     
-    override suspend fun updateChatSession(session: ChatSession): Result<Unit> {
-        return try {
+    override suspend fun updateChatSession(session: ChatSession): Result<Unit> = withContext(fileOperationsDispatcher) {
+        return@withContext try {
             val index = chatSessions.indexOfFirst { it.id == session.id }
             if (index != -1) {
                 chatSessions[index] = session
-                savePersistedChatSessions() // Save to persistence
+                
+                // Save to persistence in background to avoid blocking
+                backgroundScope.launch {
+                    savePersistedChatSessions()
+                }
+                
                 Result.success(Unit)
             } else {
                 Result.failure(Exception("Chat session not found"))
@@ -315,17 +361,20 @@ class LLMRepositoryImpl(
         }
     }
     
-    override suspend fun deleteChatSession(sessionId: String): Result<Unit> {
-        return try {
+    override suspend fun deleteChatSession(sessionId: String): Result<Unit> = withContext(fileOperationsDispatcher) {
+        return@withContext try {
             chatSessions.removeIf { it.id == sessionId }
-            savePersistedChatSessions() // Save to persistence
+            
+            // Save to persistence in background to avoid blocking
+            backgroundScope.launch {
+                savePersistedChatSessions()
+            }
+            
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
-    
-
     
     override suspend fun downloadModel(
         availableModel: AvailableModel,
@@ -338,7 +387,11 @@ class LLMRepositoryImpl(
                 // Check if not already in list to avoid duplicates
                 if (!availableModels.any { it.id == availableModel.id }) {
                     availableModels.add(model)
-                    savePersistedModels() // Save to persistence
+                    
+                    // Save to persistence in background to avoid blocking
+                    backgroundScope.launch {
+                        savePersistedModels()
+                    }
                 }
                 Log.d(TAG, "Successfully downloaded and added model: ${model.name}")
                 Result.success(model)
@@ -350,9 +403,7 @@ class LLMRepositoryImpl(
         )
     }
     
-
-    
-    override suspend fun deleteModel(modelId: String): Result<Unit> = withContext(Dispatchers.IO) {
+    override suspend fun deleteModel(modelId: String): Result<Unit> = withContext(fileOperationsDispatcher) {
         Log.d(TAG, "Deleting model: $modelId")
         try {
             // First unload the model if it's loaded
@@ -373,7 +424,12 @@ class LLMRepositoryImpl(
             if (deleted) {
                 // Remove from available models list
                 availableModels.removeAll { it.id == modelId }
-                savePersistedModels() // Save to persistence
+                
+                // Save to persistence in background to avoid blocking
+                backgroundScope.launch {
+                    savePersistedModels()
+                }
+                
                 Log.d(TAG, "Model removed from available models list: $modelId")
                 Result.success(Unit)
             } else {
@@ -401,7 +457,6 @@ class LLMRepositoryImpl(
     
     private fun loadPersistedChatSessions() {
         val sessions = persistenceManager.loadPersistedChatSessions()
-        chatSessions.clear()
         chatSessions.addAll(sessions)
     }
     

@@ -8,8 +8,17 @@ import com.example.spark.network.server.ApiServer
 import com.example.spark.utils.HuggingFaceAuth
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.FlowPreview
 import android.content.Context
+import kotlinx.coroutines.withContext
 
+@OptIn(FlowPreview::class)
+// Optimized UI state - split into focused sub-states to reduce recompositions
 data class MainUiState(
     val availableModels: List<LLMModel> = emptyList(),
     val loadedModels: List<LLMModel> = emptyList(),
@@ -52,11 +61,18 @@ class MainViewModel(
     val chatViewModel = ChatViewModel(llmRepository)
     val serverViewModel = ServerViewModel(llmRepository, apiServer, context)
     
+    // Use dedicated scope for background operations
+    private val backgroundScope = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob() + Dispatchers.Default)
+    
+    // Error handling with debouncing
+    private val _errorChannel = Channel<String>(Channel.BUFFERED)
+    val errorFlow = _errorChannel.receiveAsFlow()
+    
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
     
     init {
-        // Combine states from all delegate ViewModels
+        // Combine states from all delegate ViewModels with optimized flow operators
         combineViewModelStates()
         
         // Set up callback for chat model state changes
@@ -66,7 +82,7 @@ class MainViewModel(
     }
     
     private fun combineViewModelStates() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Default) {
             combine(
                 modelManagementViewModel.uiState,
                 modelDownloadViewModel.uiState,
@@ -102,24 +118,64 @@ class MainViewModel(
                     modelToDelete = modelMgmt.modelToDelete
                 )
             }
-            .distinctUntilChanged() // Only emit when state actually changes
+            .distinctUntilChanged()
+            .debounce(16)
+            .flowOn(Dispatchers.Default)
             .collect { combinedState ->
-                _uiState.value = combinedState
+                // Minimize main thread work - only update when necessary
+                withContext(Dispatchers.Main.immediate) {
+                    _uiState.value = combinedState
+                }
             }
         }
     }
     
-    // Delegation methods for UI layer convenience
-    fun loadModel(modelId: String) = modelManagementViewModel.loadModel(modelId)
-    fun unloadModel(modelId: String) = modelManagementViewModel.unloadModel(modelId)
-    fun addModel(filePath: String, name: String, description: String) = modelManagementViewModel.addModel(filePath, name, description)
-    fun deleteModel(modelId: String) = modelManagementViewModel.deleteModel(modelId)
+    // Delegation methods for UI layer convenience - optimized with background dispatching
+    fun loadModel(modelId: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            modelManagementViewModel.loadModel(modelId)
+        }
+    }
+    
+    fun unloadModel(modelId: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            modelManagementViewModel.unloadModel(modelId)
+        }
+    }
+    
+    fun addModel(filePath: String, name: String, description: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            modelManagementViewModel.addModel(filePath, name, description)
+        }
+    }
+    
+    fun deleteModel(modelId: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            modelManagementViewModel.deleteModel(modelId)
+        }
+    }
+    
     fun confirmDeleteModel() = modelManagementViewModel.confirmDeleteModel()
     fun cancelDeleteModel() = modelManagementViewModel.cancelDeleteModel()
     
-    fun downloadModel(availableModel: AvailableModel) = modelDownloadViewModel.downloadModel(availableModel)
-    fun cancelDownload(availableModel: AvailableModel) = modelDownloadViewModel.cancelDownload(availableModel)
-    fun downloadFromCustomUrl(url: String, name: String, description: String) = modelDownloadViewModel.downloadFromCustomUrl(url, name, description)
+    fun downloadModel(availableModel: AvailableModel) {
+        viewModelScope.launch(Dispatchers.Default) {
+            modelDownloadViewModel.downloadModel(availableModel)
+        }
+    }
+    
+    fun cancelDownload(availableModel: AvailableModel) {
+        viewModelScope.launch(Dispatchers.Default) {
+            modelDownloadViewModel.cancelDownload(availableModel)
+        }
+    }
+    
+    fun downloadFromCustomUrl(url: String, name: String, description: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            modelDownloadViewModel.downloadFromCustomUrl(url, name, description)
+        }
+    }
+    
     fun showHuggingFaceTokenDialog() = modelDownloadViewModel.showHuggingFaceTokenDialog()
     fun hideHuggingFaceTokenDialog() = modelDownloadViewModel.hideHuggingFaceTokenDialog()
     fun submitHuggingFaceToken(token: String) = modelDownloadViewModel.submitHuggingFaceToken(token)
@@ -132,18 +188,48 @@ class MainViewModel(
     fun updateCustomUrlInput(url: String) = modelDownloadViewModel.updateCustomUrlInput(url)
     fun refreshDownloadableModels() = modelDownloadViewModel.refreshDownloadableModels()
     
-    fun createChatSession(name: String, modelId: String) = chatViewModel.createChatSession(name, modelId)
-    fun selectChatSession(sessionId: String) = chatViewModel.selectChatSession(sessionId)
-    fun deleteChatSession(sessionId: String) = chatViewModel.deleteChatSession(sessionId)
-    fun sendMessage(content: String) = chatViewModel.sendMessage(content, _uiState.value.modelConfig)
-    fun stopGeneration() = chatViewModel.stopGeneration()
-    fun updateCurrentMessage(message: String) = chatViewModel.updateCurrentMessage(message)
+    fun createChatSession(name: String, modelId: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            chatViewModel.createChatSession(name, modelId)
+        }
+    }
     
-    fun startServer() = serverViewModel.startServer()
-    fun stopServer() = serverViewModel.stopServer()
+    fun selectChatSession(sessionId: String) = chatViewModel.selectChatSession(sessionId)
+    
+    fun deleteChatSession(sessionId: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            chatViewModel.deleteChatSession(sessionId)
+        }
+    }
+    
+    fun sendMessage(content: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            chatViewModel.sendMessage(content, _uiState.value.modelConfig)
+        }
+    }
+    
+    fun stopGeneration() = chatViewModel.stopGeneration()
+    
+    fun updateCurrentMessage(message: String) {
+        // Update immediately for responsive text input - no background dispatching needed for simple text updates
+        chatViewModel.updateCurrentMessage(message)
+    }
+    
+    fun startServer() {
+        viewModelScope.launch(Dispatchers.Default) {
+            serverViewModel.startServer()
+        }
+    }
+    
+    fun stopServer() {
+        viewModelScope.launch(Dispatchers.Default) {
+            serverViewModel.stopServer()
+        }
+    }
+    
     fun updateModelConfig(newConfig: ModelConfig) = serverViewModel.updateModelConfig(newConfig)
     
-    // Additional utility methods
+    // Optimized error handling
     fun clearError() {
         modelManagementViewModel.clearError()
         modelDownloadViewModel.clearError()
@@ -152,13 +238,16 @@ class MainViewModel(
     }
     
     fun refreshData() {
-        modelManagementViewModel.refreshModels()
-        modelDownloadViewModel.refreshDownloadableModels()
-        chatViewModel.refreshChatSessions()
+        viewModelScope.launch(Dispatchers.Default) {
+            // Run refresh operations in parallel
+            launch { modelManagementViewModel.refreshModels() }
+            launch { modelDownloadViewModel.refreshDownloadableModels() }
+            launch { chatViewModel.refreshChatSessions() }
+        }
     }
     
     fun openHuggingFaceTokenPage() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 huggingFaceAuth.authenticate()
             } catch (e: Exception) {

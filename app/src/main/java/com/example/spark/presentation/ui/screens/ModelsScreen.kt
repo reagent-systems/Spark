@@ -197,19 +197,28 @@ fun ModelsScreen(
                 } else {
                     // Models list
                     LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        userScrollEnabled = true,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         items(
                             items = models,
-                            key = { it.id }
+                            key = { model -> "${model.id}_${model.name}_${model.isLoaded}" },
+                            contentType = { "LocalModel" }
                         ) { model ->
-                            ModelCard(
-                                model = model,
-                                isLoading = loadingModelId == model.id,
-                                onLoadClick = { onLoadModel(model.id) },
-                                onUnloadClick = { onUnloadModel(model.id) },
-                                onDeleteClick = { onDeleteModel(model.id) }
-                            )
+                            val isModelLoading = remember(loadingModelId, model.id) {
+                                loadingModelId == model.id
+                            }
+                            
+                            key("local_${model.id}_${isModelLoading}_${model.isLoaded}_${model.hashCode()}") {
+                                ModelCard(
+                                    model = model,
+                                    isLoading = isModelLoading,
+                                    onLoadClick = { onLoadModel(model.id) },
+                                    onUnloadClick = { onUnloadModel(model.id) },
+                                    onDeleteClick = { onDeleteModel(model.id) }
+                                )
+                            }
                         }
                     }
                 }
@@ -242,28 +251,36 @@ fun ModelsScreen(
                         }
                     } else {
                         LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp),
+                            userScrollEnabled = true,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             items(
                                 items = downloadableModels,
-                                key = { it.id }
+                                key = { model -> "${model.id}_${model.name}_${model.size}" },
+                                contentType = { "AvailableModel" }
                             ) { availableModel ->
-                                // Pre-calculate expensive checks
-                                val isDownloadingThis = downloadingModelId == availableModel.id
-                                val isAlreadyDownloaded by remember {
-                                    derivedStateOf {
-                                        models.any { it.id == availableModel.id }
-                                    }
+                                val isDownloadingThis = remember(downloadingModelId, availableModel.id) {
+                                    downloadingModelId == availableModel.id
+                                }
+                                val isAlreadyDownloaded = remember(models.size, availableModel.id, models.hashCode()) {
+                                    models.any { it.id == availableModel.id }
+                                }
+                                val currentProgress = remember(downloadProgress, isDownloadingThis) {
+                                    if (isDownloadingThis) downloadProgress else 0f
                                 }
                                 
-                                AvailableModelCard(
-                                    model = availableModel,
-                                    isDownloading = isDownloadingThis,
-                                    downloadProgress = if (isDownloadingThis) downloadProgress else 0f,
-                                    isAlreadyDownloaded = isAlreadyDownloaded,
-                                    onDownload = onDownloadModel,
-                                    onCancelDownload = onCancelDownload
-                                )
+                                key("download_${availableModel.id}_${isDownloadingThis}_${isAlreadyDownloaded}_${availableModel.hashCode()}") {
+                                    AvailableModelCard(
+                                        model = availableModel,
+                                        isDownloading = isDownloadingThis,
+                                        downloadProgress = currentProgress,
+                                        isAlreadyDownloaded = isAlreadyDownloaded,
+                                        onDownload = onDownloadModel,
+                                        onCancelDownload = onCancelDownload
+                                    )
+                                }
                             }
                         }
                     }
