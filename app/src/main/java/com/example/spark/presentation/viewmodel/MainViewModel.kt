@@ -24,6 +24,7 @@ data class MainUiState(
     val availableModels: List<LLMModel> = emptyList(),
     val loadedModels: List<LLMModel> = emptyList(),
     val downloadableModels: List<AvailableModel> = emptyList(),
+    val categories: List<ModelCategory> = emptyList(),
     val chatSessions: List<ChatSession> = emptyList(),
     val currentChatSession: ChatSession? = null,
     val isServerRunning: Boolean = false,
@@ -119,10 +120,12 @@ class MainViewModel(
                 serverViewModel.uiState,
                 updateViewModel.uiState
             ) { modelMgmt, download, chat, server, update ->
+                // Heavy state combining on Default dispatcher
                 MainUiState(
                     availableModels = modelMgmt.availableModels,
                     loadedModels = modelMgmt.loadedModels,
                     downloadableModels = download.downloadableModels,
+                    categories = download.categories,
                     chatSessions = chat.chatSessions,
                     currentChatSession = chat.currentChatSession,
                     isServerRunning = server.isServerRunning,
@@ -160,7 +163,7 @@ class MainViewModel(
                 )
             }
             .distinctUntilChanged()
-            .debounce(16)
+            .debounce(8) // Reduced debounce for more responsive UI
             .flowOn(Dispatchers.Default)
             .collect { combinedState ->
                 // Minimize main thread work - only update when necessary
@@ -229,9 +232,9 @@ class MainViewModel(
     fun updateCustomUrlInput(url: String) = modelDownloadViewModel.updateCustomUrlInput(url)
     fun refreshDownloadableModels() = modelDownloadViewModel.refreshDownloadableModels()
     
-    fun createChatSession(name: String, modelId: String) {
+    fun createChatSession(name: String, modelId: String, systemPrompt: String = "") {
         viewModelScope.launch(Dispatchers.Default) {
-            chatViewModel.createChatSession(name, modelId)
+            chatViewModel.createChatSession(name, modelId, systemPrompt)
         }
     }
     
@@ -269,6 +272,12 @@ class MainViewModel(
     }
     
     fun updateModelConfig(newConfig: ModelConfig) = serverViewModel.updateModelConfig(newConfig)
+    
+    fun updateChatSession(session: ChatSession) {
+        viewModelScope.launch(Dispatchers.Default) {
+            chatViewModel.updateChatSession(session)
+        }
+    }
     
     // Optimized error handling
     fun clearError() {

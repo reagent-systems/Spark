@@ -27,7 +27,8 @@ data class ModelConfig(
     val maxTokens: Int = 1000,
     val temperature: Float = 0.8f,
     val topK: Int = 40,
-    val randomSeed: Int = 0
+    val randomSeed: Int = 0,
+    val systemPrompt: String = ""
 )
 
 @Serializable
@@ -46,7 +47,8 @@ data class ChatSession(
     val messages: List<ChatMessage>,
     val modelId: String,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val systemPrompt: String = ""
 )
 
 // Add new data class for available models that can be downloaded

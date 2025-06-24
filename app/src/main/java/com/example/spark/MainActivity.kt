@@ -257,11 +257,13 @@ fun SparkApp(
                     ModelsScreen(
                         models = uiState.availableModels,
                         downloadableModels = uiState.downloadableModels,
+                        categories = uiState.categories,
                         isLoading = uiState.isLoading,
                         loadingModelId = uiState.loadingModelId,
                         unloadingModelId = uiState.unloadingModelId,
                         downloadingModelId = uiState.downloadingModelId,
                         downloadProgress = uiState.downloadProgress,
+                        isHuggingFaceAuthenticated = uiState.isHuggingFaceAuthenticated,
                         onLoadModel = viewModel::loadModel,
                         onUnloadModel = viewModel::unloadModel,
                         onAddModel = viewModel::addModel,
@@ -292,7 +294,8 @@ fun SparkApp(
                         onLoadModel = viewModel::loadModel,
                         onDeleteChatSession = viewModel::deleteChatSession,
                         onStopGeneration = viewModel::stopGeneration,
-                        onUpdateModelConfig = viewModel::updateModelConfig
+                        onUpdateModelConfig = viewModel::updateModelConfig,
+                        onUpdateChatSession = viewModel::updateChatSession
                     )
                 }
             )

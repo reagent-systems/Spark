@@ -2,14 +2,17 @@ package com.example.spark.presentation.ui.screens
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.*
 import androidx.compose.animation.AnimatedVisibility
@@ -17,23 +20,20 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.ui.draw.scale
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -56,7 +56,7 @@ fun ChatScreen(
     currentMessage: String,
     isGenerating: Boolean,
     modelConfig: ModelConfig,
-    onCreateChatSession: (String, String) -> Unit,
+    onCreateChatSession: (String, String, String) -> Unit,
     onSelectChatSession: (String) -> Unit,
     onSendMessage: (String) -> Unit,
     onUpdateCurrentMessage: (String) -> Unit,
@@ -64,6 +64,7 @@ fun ChatScreen(
     onDeleteChatSession: (String) -> Unit,
     onStopGeneration: () -> Unit,
     onUpdateModelConfig: (ModelConfig) -> Unit,
+    onUpdateChatSession: (ChatSession) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showNewChatDialog by remember { mutableStateOf(false) }
@@ -204,7 +205,7 @@ fun ChatScreen(
                         modifier = Modifier.padding(32.dp)
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.Send,
+                            Icons.Default.Send,
                             contentDescription = null,
                             modifier = Modifier.size(64.dp),
                             tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
@@ -413,7 +414,7 @@ fun ChatScreen(
                                     }
                                     else -> {
                                         Icon(
-                                            Icons.AutoMirrored.Filled.Send,
+                                            Icons.Default.Send,
                                             contentDescription = "Send",
                                             tint = if (localTextInput.isBlank()) 
                                                 MaterialTheme.colorScheme.onSurfaceVariant 
@@ -482,10 +483,13 @@ fun ChatScreen(
     if (showModelConfigDialog) {
         ModelConfigDialog(
             currentConfig = modelConfig,
+            currentChatSession = currentChatSession,
             onDismiss = { showModelConfigDialog = false },
             onConfigUpdate = { newConfig ->
                 onUpdateModelConfig(newConfig)
-                showModelConfigDialog = false
+            },
+            onChatSessionUpdate = { updatedSession ->
+                onUpdateChatSession(updatedSession)
             }
         )
     }
@@ -496,9 +500,9 @@ fun ChatScreen(
             availableModels = availableModels,
             loadedModels = loadedModels,
             onDismiss = { showNewChatDialog = false },
-            onConfirm = { name, modelId ->
+            onConfirm = { name, modelId, systemPrompt ->
                 // Model will be automatically loaded by the ViewModel
-                onCreateChatSession(name, modelId)
+                onCreateChatSession(name, modelId, systemPrompt)
                 showNewChatDialog = false
             }
         )
@@ -658,108 +662,330 @@ fun NewChatDialog(
     availableModels: List<LLMModel>,
     loadedModels: List<LLMModel>,
     onDismiss: () -> Unit,
-    onConfirm: (String, String) -> Unit
+    onConfirm: (String, String, String) -> Unit // name, modelId, systemPrompt
 ) {
     var chatName by remember { mutableStateOf("") }
     var selectedModelId by remember { mutableStateOf(availableModels.firstOrNull()?.id ?: "") }
+    var systemPrompt by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(false) }
+    var selectedTab by remember { mutableStateOf(0) }
     
-    AlertDialog(
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
+    val maxDialogHeight = (screenHeight * 0.9f).coerceAtMost(700.dp)
+    
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text("New Chat")
-        },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = chatName,
-                    onValueChange = { chatName = it },
-                    label = { Text("Chat Name") },
-                    modifier = Modifier.fillMaxWidth()
-                )
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = maxDialogHeight)
+                .padding(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "New Chat",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                ExposedDropdownMenuBox(
-                    expanded = expanded,
-                    onExpandedChange = { expanded = !expanded }
+                // Tab Row
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    OutlinedTextField(
-                        value = availableModels.find { it.id == selectedModelId }?.name ?: "Select Model",
-                        onValueChange = { },
-                        readOnly = true,
-                        label = { Text("Model") },
-                        trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("Basic") },
+                        icon = { Icon(Icons.Default.Chat, contentDescription = null) }
                     )
-                    
-                    ExposedDropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
-                    ) {
-                        availableModels.forEach { model ->
-                            DropdownMenuItem(
-                                text = { 
-                                    Column {
-                                        Text(model.name)
-                                        Text(
-                                            text = if (loadedModels.any { it.id == model.id }) "Loaded" else "Will auto-load",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (loadedModels.any { it.id == model.id }) 
-                                                MaterialTheme.colorScheme.primary 
-                                            else 
-                                                MaterialTheme.colorScheme.onSurfaceVariant
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = { Text("System Prompt") },
+                        icon = { Icon(Icons.Default.Android, contentDescription = null) }
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // Content
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    when (selectedTab) {
+                        0 -> {
+                            // Basic Tab
+                            OutlinedTextField(
+                                value = chatName,
+                                onValueChange = { chatName = it },
+                                label = { Text("Chat Name") },
+                                placeholder = { Text("My New Chat") },
+                                modifier = Modifier.fillMaxWidth(),
+                                leadingIcon = { Icon(Icons.Default.Title, contentDescription = null) }
+                            )
+                            
+                            // Model Selection
+                            Text(
+                                text = "Select Model",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                            )
+                            
+                            ExposedDropdownMenuBox(
+                                expanded = expanded,
+                                onExpandedChange = { expanded = !expanded }
+                            ) {
+                                OutlinedTextField(
+                                    value = availableModels.find { it.id == selectedModelId }?.name ?: "Select Model",
+                                    onValueChange = { },
+                                    readOnly = true,
+                                    label = { Text("Model") },
+                                    leadingIcon = { Icon(Icons.Default.Computer, contentDescription = null) },
+                                    trailingIcon = {
+                                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .menuAnchor()
+                                )
+                                
+                                ExposedDropdownMenu(
+                                    expanded = expanded,
+                                    onDismissRequest = { expanded = false }
+                                ) {
+                                    availableModels.forEach { model ->
+                                        DropdownMenuItem(
+                                            text = { 
+                                                Column {
+                                                    Text(
+                                                        text = model.name,
+                                                        style = MaterialTheme.typography.bodyMedium
+                                                    )
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        if (loadedModels.any { it.id == model.id }) {
+                                                            Icon(
+                                                                Icons.Default.CheckCircle,
+                                                                contentDescription = null,
+                                                                tint = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.size(12.dp)
+                                                            )
+                                                            Text(
+                                                                text = "Loaded",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.primary
+                                                            )
+                                                        } else {
+                                                            Icon(
+                                                                Icons.Default.Download,
+                                                                contentDescription = null,
+                                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                modifier = Modifier.size(12.dp)
+                                                            )
+                                                            Text(
+                                                                text = "Will auto-load",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            onClick = {
+                                                selectedModelId = model.id
+                                                expanded = false
+                                            }
                                         )
                                     }
-                                },
-                                onClick = {
-                                    selectedModelId = model.id
-                                    expanded = false
+                                }
+                            }
+                            
+                            if (availableModels.isEmpty()) {
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Error,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "No models available. Please add a model first.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                            } else {
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Info,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Models will be automatically loaded when you start chatting.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        
+                        1 -> {
+                            // System Prompt Tab
+                            Text(
+                                text = "System Prompt",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                            )
+                            
+                            Text(
+                                text = "Set a system prompt that will guide the AI's behavior for this chat. This prompt will be applied to all messages in the conversation.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            OutlinedTextField(
+                                value = systemPrompt,
+                                onValueChange = { systemPrompt = it },
+                                label = { Text("System Prompt") },
+                                placeholder = { Text("You are a helpful AI assistant...") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 100.dp, max = 150.dp),
+                                maxLines = 6,
+                                supportingText = { 
+                                    Text("${systemPrompt.length}/1000 characters") 
                                 }
                             )
+                            
+                            // Quick system prompt presets
+                            Text(
+                                text = "Quick Presets:",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                            )
+                            
+                            LazyColumn(
+                                modifier = Modifier.heightIn(max = 200.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                item {
+                                    SystemPromptPresetCard(
+                                        title = "Default Assistant",
+                                        description = "Helpful and honest responses",
+                                        prompt = "You are a helpful AI assistant. Be concise, accurate, and honest in your responses.",
+                                        onSelect = { systemPrompt = it }
+                                    )
+                                }
+                                item {
+                                    SystemPromptPresetCard(
+                                        title = "Creative Writer",
+                                        description = "Imaginative and engaging content",
+                                        prompt = "You are a creative writing assistant. Help craft engaging stories and creative content with imagination and flair.",
+                                        onSelect = { systemPrompt = it }
+                                    )
+                                }
+                                item {
+                                    SystemPromptPresetCard(
+                                        title = "Code Assistant",
+                                        description = "Programming help and examples",
+                                        prompt = "You are a programming assistant. Provide clear, well-commented code examples and explain technical concepts simply.",
+                                        onSelect = { systemPrompt = it }
+                                    )
+                                }
+                                item {
+                                    SystemPromptPresetCard(
+                                        title = "Tutor",
+                                        description = "Patient teaching style",
+                                        prompt = "You are a patient tutor. Explain concepts step-by-step and adapt explanations to the user's understanding level.",
+                                        onSelect = { systemPrompt = it }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
                 
-                if (availableModels.isEmpty()) {
-                    Text(
-                        text = "No models available. Please add a model first.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                } else {
-                    Text(
-                        text = "Models will be automatically loaded when you start chatting.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // Action buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel")
+                    }
+                    
+                    Button(
+                        onClick = {
+                            if (chatName.isNotBlank() && selectedModelId.isNotBlank()) {
+                                onConfirm(chatName.trim(), selectedModelId, systemPrompt.take(1000))
+                            }
+                        },
+                        enabled = chatName.isNotBlank() && selectedModelId.isNotBlank() && availableModels.isNotEmpty(),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Create Chat")
+                    }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    if (chatName.isNotBlank() && selectedModelId.isNotBlank()) {
-                        onConfirm(chatName, selectedModelId)
-                    }
-                },
-                enabled = chatName.isNotBlank() && selectedModelId.isNotBlank() && availableModels.isNotEmpty()
-            ) {
-                Text("Create")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
         }
-    )
+    }
 }
 
 @Composable
@@ -799,13 +1025,23 @@ fun TypingIndicator() {
 @Composable
 fun ModelConfigDialog(
     currentConfig: ModelConfig,
+    currentChatSession: ChatSession?,
     onDismiss: () -> Unit,
-    onConfigUpdate: (ModelConfig) -> Unit
+    onConfigUpdate: (ModelConfig) -> Unit,
+    onChatSessionUpdate: (ChatSession) -> Unit
 ) {
     var maxTokens by remember { mutableStateOf(currentConfig.maxTokens.toString()) }
     var temperature by remember { mutableStateOf(currentConfig.temperature.toString()) }
     var topK by remember { mutableStateOf(currentConfig.topK.toString()) }
     var randomSeed by remember { mutableStateOf(currentConfig.randomSeed.toString()) }
+    var systemPrompt by remember { 
+        mutableStateOf(currentChatSession?.systemPrompt ?: currentConfig.systemPrompt) 
+    }
+    var selectedTab by remember { mutableStateOf(0) }
+    
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
+    val maxDialogHeight = (screenHeight * 0.9f).coerceAtMost(800.dp)
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -813,112 +1049,311 @@ fun ModelConfigDialog(
     ) {
         Card(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .heightIn(max = maxDialogHeight)
                 .padding(16.dp),
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .fillMaxWidth()
+                    .padding(24.dp)
             ) {
                 // Header
-                Text(
-                    text = "Model Configuration",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                )
-                
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                // Max Tokens
-                OutlinedTextField(
-                    value = maxTokens,
-                    onValueChange = { maxTokens = it },
-                    label = { Text("Max Output Tokens") },
-                    supportingText = { Text("Maximum number of tokens to generate (100-4000)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                
-                // Temperature
-                OutlinedTextField(
-                    value = temperature,
-                    onValueChange = { temperature = it },
-                    label = { Text("Temperature") },
-                    supportingText = { Text("Creativity level (0.0-2.0). Higher = more creative") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                
-                // Top K
-                OutlinedTextField(
-                    value = topK,
-                    onValueChange = { topK = it },
-                    label = { Text("Top K") },
-                    supportingText = { Text("Consider top K tokens (1-100)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                
-                // Random Seed
-                OutlinedTextField(
-                    value = randomSeed,
-                    onValueChange = { randomSeed = it },
-                    label = { Text("Random Seed") },
-                    supportingText = { Text("Seed for reproducible results (0 = random)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                
-                // Quick preset buttons
-                Text(
-                    text = "Quick Presets:",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedButton(
-                        onClick = {
-                            maxTokens = "1000"
-                            temperature = "0.3"
-                            topK = "20"
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Precise", style = MaterialTheme.typography.bodySmall)
-                    }
-                    
-                    OutlinedButton(
-                        onClick = {
-                            maxTokens = "1500"
-                            temperature = "0.7"
-                            topK = "40"
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Balanced", style = MaterialTheme.typography.bodySmall)
-                    }
-                    
-                    OutlinedButton(
-                        onClick = {
-                            maxTokens = "2000"
-                            temperature = "1.2"
-                            topK = "60"
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Creative", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = "Model Configuration",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
                     }
                 }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // Tab Row
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("System Prompt") },
+                        icon = { Icon(Icons.Default.Android, contentDescription = null) }
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = { Text("Parameters") },
+                        icon = { Icon(Icons.Default.Tune, contentDescription = null) }
+                    )
                 }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // Content based on selected tab
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    when (selectedTab) {
+                        0 -> {
+                            // System Prompt Tab
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "System Prompt",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                                )
+                                
+                                // Show indicator if this chat has a system prompt
+                                if (currentChatSession?.systemPrompt?.isNotBlank() == true) {
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                                        )
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.CheckCircle,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(12.dp),
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "Active",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            Text(
+                                text = if (currentChatSession != null) {
+                                    "This system prompt applies only to the current chat: \"${currentChatSession.name}\""
+                                } else {
+                                    "Set a system prompt that will apply to all future messages in this chat."
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            OutlinedTextField(
+                                value = systemPrompt,
+                                onValueChange = { systemPrompt = it },
+                                label = { Text("System Prompt") },
+                                placeholder = { Text("You are a helpful AI assistant...") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 120.dp, max = 200.dp),
+                                maxLines = 8,
+                                supportingText = { 
+                                    Text("${systemPrompt.length}/2000 characters") 
+                                }
+                            )
+                            
+                            // System Prompt Presets
+                            Text(
+                                text = "Quick Presets:",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                            )
+                            
+                            LazyColumn(
+                                modifier = Modifier.heightIn(max = 200.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                item {
+                                    SystemPromptPresetCard(
+                                        title = "Default Assistant",
+                                        description = "Helpful, harmless, and honest AI assistant",
+                                        prompt = "You are a helpful AI assistant. Be concise, accurate, and honest in your responses. If you don't know something, say so clearly.",
+                                        onSelect = { systemPrompt = it }
+                                    )
+                                }
+                                item {
+                                    SystemPromptPresetCard(
+                                        title = "Creative Writer",
+                                        description = "Focuses on creative and engaging content",
+                                        prompt = "You are a creative writing assistant. Help users craft engaging stories, poems, and creative content. Be imaginative and inspiring while maintaining quality.",
+                                        onSelect = { systemPrompt = it }
+                                    )
+                                }
+                                item {
+                                    SystemPromptPresetCard(
+                                        title = "Code Assistant",
+                                        description = "Specialized in programming and technical help",
+                                        prompt = "You are a programming assistant. Provide clear, well-commented code examples and explain technical concepts simply. Focus on best practices and security.",
+                                        onSelect = { systemPrompt = it }
+                                    )
+                                }
+                                item {
+                                    SystemPromptPresetCard(
+                                        title = "Tutor",
+                                        description = "Educational and patient teaching style",
+                                        prompt = "You are a patient tutor. Explain concepts step-by-step, ask clarifying questions, and adapt your explanations to the user's level of understanding.",
+                                        onSelect = { systemPrompt = it }
+                                    )
+                                }
+                                item {
+                                    SystemPromptPresetCard(
+                                        title = "Professional",
+                                        description = "Formal and business-focused responses",
+                                        prompt = "You are a professional business assistant. Provide formal, well-structured responses suitable for workplace communication. Be efficient and solution-oriented.",
+                                        onSelect = { systemPrompt = it }
+                                    )
+                                }
+                            }
+                        }
+                        
+                        1 -> {
+                            // Parameters Tab
+                            Text(
+                                text = "Generation Parameters",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                            )
+                            
+                            // Max Tokens with Slider
+                            Text(
+                                text = "Max Output Tokens: ${maxTokens}",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Slider(
+                                value = maxTokens.toIntOrNull()?.toFloat() ?: 1000f,
+                                onValueChange = { maxTokens = it.toInt().toString() },
+                                valueRange = 100f..4000f,
+                                steps = 38, // (4000-100)/100 steps
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Maximum number of tokens to generate",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            // Temperature with Slider
+                            Text(
+                                text = "Temperature: ${String.format("%.2f", temperature.toFloatOrNull() ?: 0.8f)}",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Slider(
+                                value = temperature.toFloatOrNull() ?: 0.8f,
+                                onValueChange = { temperature = String.format("%.2f", it) },
+                                valueRange = 0.0f..2.0f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Controls randomness: 0.0 = focused, 2.0 = very creative",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            // Top K with Slider
+                            Text(
+                                text = "Top K: ${topK}",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Slider(
+                                value = topK.toIntOrNull()?.toFloat() ?: 40f,
+                                onValueChange = { topK = it.toInt().toString() },
+                                valueRange = 1f..100f,
+                                steps = 98, // 99 steps for 1-100 range
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Consider top K most likely tokens",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            // Random Seed
+                            OutlinedTextField(
+                                value = randomSeed,
+                                onValueChange = { randomSeed = it },
+                                label = { Text("Random Seed") },
+                                supportingText = { Text("0 = random, any number = reproducible results") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+                            
+                            // Quick preset buttons
+                            Text(
+                                text = "Quick Presets:",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                            )
+                            
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                item {
+                                    ParameterPresetCard(
+                                        title = "Precise",
+                                        description = "Focused & consistent",
+                                        onClick = {
+                                            maxTokens = "1000"
+                                            temperature = "0.30"
+                                            topK = "20"
+                                        }
+                                    )
+                                }
+                                item {
+                                    ParameterPresetCard(
+                                        title = "Balanced",
+                                        description = "Good all-around",
+                                        onClick = {
+                                            maxTokens = "1500"
+                                            temperature = "0.70"
+                                            topK = "40"
+                                        }
+                                    )
+                                }
+                                item {
+                                    ParameterPresetCard(
+                                        title = "Creative",
+                                        description = "Diverse & imaginative",
+                                        onClick = {
+                                            maxTokens = "2000"
+                                            temperature = "1.20"
+                                            topK = "60"
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
                 
                 // Action buttons
                 Row(
@@ -939,20 +1374,115 @@ fun ModelConfigDialog(
                                     maxTokens = maxTokens.toIntOrNull()?.coerceIn(100, 4000) ?: currentConfig.maxTokens,
                                     temperature = temperature.toFloatOrNull()?.coerceIn(0.0f, 2.0f) ?: currentConfig.temperature,
                                     topK = topK.toIntOrNull()?.coerceIn(1, 100) ?: currentConfig.topK,
-                                    randomSeed = randomSeed.toIntOrNull() ?: currentConfig.randomSeed
+                                    randomSeed = randomSeed.toIntOrNull() ?: currentConfig.randomSeed,
+                                    systemPrompt = currentConfig.systemPrompt // Keep model config system prompt unchanged
                                 )
                                 onConfigUpdate(newConfig)
+                                
+                                // Update chat session system prompt if we have a current session
+                                currentChatSession?.let { session ->
+                                    val updatedSession = session.copy(
+                                        systemPrompt = systemPrompt.take(2000),
+                                        updatedAt = System.currentTimeMillis()
+                                    )
+                                    onChatSessionUpdate(updatedSession)
+                                }
+                                
+                                // Close dialog after successful update
+                                onDismiss()
                             } catch (e: Exception) {
                                 // Handle invalid input gracefully
                                 onConfigUpdate(currentConfig)
+                                onDismiss()
                             }
                         },
                         modifier = Modifier.weight(1f)
                     ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text("Apply")
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun SystemPromptPresetCard(
+    title: String,
+    description: String,
+    prompt: String,
+    onSelect: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                    )
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = { onSelect(prompt) }) {
+                    Text("Use")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ParameterPresetCard(
+    title: String,
+    description: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.width(120.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        ),
+        onClick = onClick
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
         }
     }
 } 

@@ -38,82 +38,105 @@ class ModelDownloadViewModel(
     }
     
     private fun loadDownloadableModels() {
-        viewModelScope.launch {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
+                // Heavy JSON parsing and model processing on IO thread
                 val downloadableModels = ModelCatalog.getAvailableModels()
-                _uiState.update {
-                    it.copy(downloadableModels = downloadableModels)
+                val categories = ModelCatalog.getCategories()
+                
+                // Only switch to Main for UI updates
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update {
+                        it.copy(
+                            downloadableModels = downloadableModels,
+                            categories = categories
+                        )
+                    }
                 }
             } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(errorMessage = "Failed to load downloadable models: ${e.message}")
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update {
+                        it.copy(errorMessage = "Failed to load downloadable models: ${e.message}")
+                    }
                 }
             }
         }
     }
     
     fun downloadModel(availableModel: AvailableModel) {
-        viewModelScope.launch {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             // Check if model requires authentication
             if (availableModel.needsHuggingFaceAuth && !huggingFaceAuth.isAuthenticated()) {
-                // Show authentication dialog
-                _uiState.update { 
-                    it.copy(
-                        showHuggingFaceTokenDialog = true,
-                        pendingDownloadModel = availableModel
-                    ) 
+                // Show authentication dialog (switch to Main for UI update)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update { 
+                        it.copy(
+                            showHuggingFaceTokenDialog = true,
+                            pendingDownloadModel = availableModel
+                        ) 
+                    }
                 }
                 return@launch
             }
             
-            _uiState.update { 
-                it.copy(
-                    downloadingModelId = availableModel.id,
-                    downloadProgress = 0f
-                ) 
+            // Update UI state on Main thread
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                _uiState.update { 
+                    it.copy(
+                        downloadingModelId = availableModel.id,
+                        downloadProgress = 0f
+                    ) 
+                }
             }
             
             try {
+                // Heavy download operation stays on IO thread
                 val result = llmRepository.downloadModel(availableModel) { progress ->
-                    _uiState.update { 
-                        it.copy(downloadProgress = progress) 
+                    // Progress updates on Main thread
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                        _uiState.update { 
+                            it.copy(downloadProgress = progress) 
+                        }
                     }
                 }
                 
-                result.fold(
-                    onSuccess = { model ->
-                        _uiState.update {
-                            it.copy(
-                                downloadingModelId = null,
-                                downloadProgress = 0f
-                            )
-                        }
-                        // Trigger callback to refresh models list on main thread with small delay
-                        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            kotlinx.coroutines.delay(100) // Small delay to ensure UI is ready
-                            modelStateChangeCallback?.invoke()
-                        }
-                    },
-                    onFailure = { error ->
-                        // Don't show error for cancellation
-                        if (error !is CancellationException) {
-                            _uiState.update {
-                                it.copy(
-                                    downloadingModelId = null,
-                                    downloadProgress = 0f,
-                                    errorMessage = "Failed to download model: ${error.message}"
-                                )
-                            }
-                        } else {
+                // Handle result on Main thread
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    result.fold(
+                        onSuccess = { model ->
                             _uiState.update {
                                 it.copy(
                                     downloadingModelId = null,
                                     downloadProgress = 0f
                                 )
                             }
+                            // Trigger callback to refresh models list with small delay
+                            viewModelScope.launch {
+                                kotlinx.coroutines.delay(100) // Small delay to ensure UI is ready
+                                modelStateChangeCallback?.invoke()
+                            }
+                        },
+                        onFailure = { error ->
+                            // Don't show error for cancellation
+                            if (error !is CancellationException) {
+                                _uiState.update {
+                                    it.copy(
+                                        downloadingModelId = null,
+                                        downloadProgress = 0f,
+                                        errorMessage = "Failed to download model: ${error.message}"
+                                    )
+                                }
+                            } else {
+                                _uiState.update {
+                                    it.copy(
+                                        downloadingModelId = null,
+                                        downloadProgress = 0f
+                                    )
+                                }
+                            }
                         }
-                    }
-                )
+                    )
+                }
             } catch (e: Exception) {
                 // Don't show error for cancellation
                 if (e !is CancellationException) {
@@ -177,7 +200,17 @@ class ModelDownloadViewModel(
             }
             
             try {
-                val result = llmRepository.addModel(url, name, description)
+                val result = llmRepository.downloadModelFromUrl(
+                    url = url,
+                    name = name,
+                    description = description,
+                    onProgress = { progress ->
+                        _uiState.update {
+                            it.copy(downloadProgress = progress)
+                        }
+                    }
+                )
+                
                 result.fold(
                     onSuccess = { model ->
                         _uiState.update {
@@ -306,16 +339,27 @@ class ModelDownloadViewModel(
     }
     
     fun refreshDownloadableModels() {
-        viewModelScope.launch {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
+                // Heavy operations on IO thread
                 ModelCatalog.clearCache()
                 val downloadableModels = ModelCatalog.getAvailableModels()
-                _uiState.update {
-                    it.copy(downloadableModels = downloadableModels)
+                val categories = ModelCatalog.getCategories()
+                
+                // Switch to Main only for UI updates
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update {
+                        it.copy(
+                            downloadableModels = downloadableModels,
+                            categories = categories
+                        )
+                    }
                 }
             } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(errorMessage = "Failed to refresh downloadable models: ${e.message}")
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _uiState.update {
+                        it.copy(errorMessage = "Failed to refresh downloadable models: ${e.message}")
+                    }
                 }
             }
         }
@@ -328,6 +372,7 @@ class ModelDownloadViewModel(
 
 data class ModelDownloadUiState(
     val downloadableModels: List<AvailableModel> = emptyList(),
+    val categories: List<ModelCategory> = emptyList(),
     val downloadingModelId: String? = null,
     val downloadProgress: Float = 0f,
     val errorMessage: String? = null,

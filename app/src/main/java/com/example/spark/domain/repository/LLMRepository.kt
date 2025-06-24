@@ -27,6 +27,7 @@ interface LLMRepository {
     
     // Chat session management
     suspend fun createChatSession(name: String, modelId: String): ChatSession
+    suspend fun createChatSession(name: String, modelId: String, systemPrompt: String): ChatSession
     suspend fun getChatSessions(): List<ChatSession>
     suspend fun getChatSession(sessionId: String): ChatSession?
     suspend fun addMessageToSession(sessionId: String, message: ChatMessage): Result<Unit>
@@ -36,6 +37,14 @@ interface LLMRepository {
     // Model downloading
     suspend fun downloadModel(
         availableModel: com.example.spark.domain.models.AvailableModel,
+        onProgress: (Float) -> Unit
+    ): Result<LLMModel>
+    
+    // Download model from URL
+    suspend fun downloadModelFromUrl(
+        url: String,
+        name: String,
+        description: String,
         onProgress: (Float) -> Unit
     ): Result<LLMModel>
     

@@ -40,20 +40,18 @@ class ChatViewModel(
         }
     }
     
-    fun createChatSession(name: String, modelId: String) {
+    fun createChatSession(name: String, modelId: String, systemPrompt: String = "") {
         viewModelScope.launch {
             try {
-                val session = llmRepository.createChatSession(name, modelId)
-                val sessions = llmRepository.getChatSessions()
+                val session = llmRepository.createChatSession(name, modelId, systemPrompt)
                 _uiState.update {
                     it.copy(
-                        chatSessions = sessions,
+                        chatSessions = it.chatSessions + session,
                         currentChatSession = session
                     )
                 }
-                
-                // Automatically ensure the correct model is loaded for the new chat
-                ensureCorrectModelLoaded(modelId)
+                // Notify that model state might need to change
+                onModelStateChanged?.invoke()
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(errorMessage = "Failed to create chat session: ${e.message}")
@@ -140,10 +138,17 @@ class ChatViewModel(
                     )
                 }
                 
-                // Generate AI response using current config
+                // Construct the full prompt with system prompt and conversation history
+                val fullPrompt = buildPrompt(
+                    systemPrompt = modelConfig.systemPrompt.ifBlank { currentSession.systemPrompt },
+                    conversationHistory = updatedSession?.messages ?: emptyList(),
+                    currentMessage = content
+                )
+                
+                // Generate AI response using the constructed prompt
                 val response = llmRepository.generateResponse(
                     currentSession.modelId,
-                    content,
+                    fullPrompt,
                     modelConfig
                 ).first() // Get the complete response
                 
@@ -184,6 +189,35 @@ class ChatViewModel(
                 generationJob = null
             }
         }
+    }
+    
+    private fun buildPrompt(
+        systemPrompt: String,
+        conversationHistory: List<ChatMessage>,
+        currentMessage: String
+    ): String {
+        val prompt = StringBuilder()
+        
+        // Add system prompt if provided
+        if (systemPrompt.isNotBlank()) {
+            prompt.append("System: $systemPrompt\n\n")
+        }
+        
+        // Add conversation history (last 10 messages to avoid context overflow)
+        val recentMessages = conversationHistory.takeLast(10)
+        for (message in recentMessages) {
+            if (message.isUser) {
+                prompt.append("Human: ${message.content}\n")
+            } else {
+                prompt.append("Assistant: ${message.content}\n")
+            }
+        }
+        
+        // Add current message
+        prompt.append("Human: $currentMessage\n")
+        prompt.append("Assistant: ")
+        
+        return prompt.toString()
     }
     
     fun stopGeneration() {
@@ -280,6 +314,37 @@ class ChatViewModel(
     
     fun clearError() {
         _uiState.update { it.copy(errorMessage = null) }
+    }
+    
+    fun updateChatSession(session: ChatSession) {
+        viewModelScope.launch {
+            try {
+                val result = llmRepository.updateChatSession(session)
+                result.fold(
+                    onSuccess = {
+                        // Update the current session if it's the one being updated
+                        _uiState.update { state ->
+                            val updatedSessions = state.chatSessions.map { 
+                                if (it.id == session.id) session else it 
+                            }
+                            state.copy(
+                                chatSessions = updatedSessions,
+                                currentChatSession = if (state.currentChatSession?.id == session.id) session else state.currentChatSession
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        _uiState.update {
+                            it.copy(errorMessage = "Failed to update chat session: ${error.message}")
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(errorMessage = "Error updating chat session: ${e.message}")
+                }
+            }
+        }
     }
     
     fun refreshChatSessions() {

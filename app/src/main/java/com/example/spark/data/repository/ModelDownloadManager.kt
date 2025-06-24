@@ -46,7 +46,13 @@ class ModelDownloadManager(
             }
             
             // Create target file
-            val fileName = "${availableModel.id}.task"
+            val originalFileName = availableModel.downloadUrl.substringAfterLast("/")
+            val fileExtension = if (originalFileName.contains(".")) {
+                originalFileName.substringAfterLast(".")
+            } else {
+                "task" // Default to .task if no extension found
+            }
+            val fileName = "${availableModel.id}.$fileExtension"
             val targetFile = File(modelsDir, fileName)
             
             // Check if model already exists
@@ -105,10 +111,16 @@ class ModelDownloadManager(
             Log.e(TAG, "Failed to download model: ${availableModel.name}", e)
             
             // Clean up partial file if download was cancelled or failed
-            val targetFile = File(File(context.filesDir, "models"), "${availableModel.id}.task")
-            if (targetFile.exists() && targetFile.length() == 0L) {
-                targetFile.delete()
-                Log.d(TAG, "Cleaned up empty file after failed download: ${targetFile.absolutePath}")
+            val modelsDir = File(context.filesDir, "models")
+            val partialFiles = modelsDir.listFiles { file ->
+                file.name.startsWith("${availableModel.id}.") && file.length() == 0L
+            }
+            
+            partialFiles?.forEach { file ->
+                if (file.exists()) {
+                    file.delete()
+                    Log.d(TAG, "Cleaned up empty file after failed download: ${file.absolutePath}")
+                }
             }
             
             Result.failure(e)
@@ -204,11 +216,17 @@ class ModelDownloadManager(
                 job.cancel()
                 downloadJobs.remove(modelId)
                 
-                // Clean up partial file
-                val targetFile = File(File(context.filesDir, "models"), "${modelId}.task")
-                if (targetFile.exists()) {
-                    targetFile.delete()
-                    Log.d(TAG, "Cleaned up partial file after cancellation: ${targetFile.absolutePath}")
+                // Clean up partial file - search for files with this model ID
+                val modelsDir = File(context.filesDir, "models")
+                val partialFiles = modelsDir.listFiles { file ->
+                    file.name.startsWith("${modelId}.")
+                }
+                
+                partialFiles?.forEach { file ->
+                    if (file.exists()) {
+                        file.delete()
+                        Log.d(TAG, "Cleaned up partial file after cancellation: ${file.absolutePath}")
+                    }
                 }
                 
                 Log.d(TAG, "Successfully cancelled download for model: $modelId")

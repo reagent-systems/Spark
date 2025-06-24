@@ -22,18 +22,29 @@ object ModelCatalog {
     
     suspend fun fetchAvailableModels(): Result<List<AvailableModel>> = withContext(Dispatchers.IO) {
         try {
-            // Check cache first
+            // Check cache first (fast operation)
             val currentTime = System.currentTimeMillis()
-            if (cachedCatalog != null && (currentTime - lastFetchTime) < CACHE_DURATION) {
-                Log.d(TAG, "Returning cached models")
-                return@withContext Result.success(cachedCatalog!!.models)
+            cachedCatalog?.let { cache ->
+                if ((currentTime - lastFetchTime) < CACHE_DURATION) {
+                    Log.d(TAG, "Returning cached models (${cache.models.size} models)")
+                    return@withContext Result.success(cache.models)
+                }
             }
             
             Log.d(TAG, "Fetching models from CDN: $CDN_URL")
-            val jsonString = URL(CDN_URL).readText()
+            
+            // Network and JSON parsing on IO thread
+            val jsonString = withContext(Dispatchers.IO) {
+                URL(CDN_URL).readText()
+            }
             Log.d(TAG, "Received JSON response: ${jsonString.take(200)}...")
             
-            val catalog = json.decodeFromString<ModelCatalogResponse>(jsonString)
+            // JSON parsing on Default dispatcher (CPU intensive)
+            val catalog = withContext(Dispatchers.Default) {
+                json.decodeFromString<ModelCatalogResponse>(jsonString)
+            }
+            
+            // Update cache
             cachedCatalog = catalog
             lastFetchTime = currentTime
             

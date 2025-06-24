@@ -112,7 +112,7 @@ fun CustomUrlDownloadDialog(
                             Icon(Icons.Default.Link, contentDescription = null)
                         },
                         supportingText = {
-                            Text("Enter a direct download link to a .task model file")
+                            Text("Enter a direct download link to a .task or .tflite model file")
                         }
                     )
 
@@ -157,7 +157,7 @@ fun CustomUrlDownloadDialog(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "• HuggingFace model files (.task)\n• Direct download links\n• Must be compatible with MediaPipe LLM",
+                                text = "• MediaPipe .task files (recommended)\n• HuggingFace model files (.tflite may not work)\n• Direct download links\n\nExample: SmolLM .task files from:\nhttps://huggingface.co/litert-community/SmolLM-135M-Instruct",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

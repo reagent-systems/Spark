@@ -287,13 +287,18 @@ class LLMRepositoryImpl(
     }
     
     override suspend fun createChatSession(name: String, modelId: String): ChatSession = withContext(fileOperationsDispatcher) {
+        return@withContext createChatSession(name, modelId, "")
+    }
+    
+    override suspend fun createChatSession(name: String, modelId: String, systemPrompt: String): ChatSession = withContext(fileOperationsDispatcher) {
         val session = ChatSession(
             id = UUID.randomUUID().toString(),
             name = name,
             messages = emptyList(),
             modelId = modelId,
             createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis()
+            updatedAt = System.currentTimeMillis(),
+            systemPrompt = systemPrompt
         )
         chatSessions.add(session)
         
@@ -401,6 +406,82 @@ class LLMRepositoryImpl(
                 Result.failure(error)
             }
         )
+    }
+    
+    override suspend fun downloadModelFromUrl(
+        url: String,
+        name: String,
+        description: String,
+        onProgress: (Float) -> Unit
+    ): Result<LLMModel> = withContext(fileOperationsDispatcher) {
+        Log.d(TAG, "Starting URL download: $name from $url")
+        
+        try {
+            // Create a unique ID from the URL
+            val modelId = url.substringAfterLast("/").substringBeforeLast(".")
+                .replace("-", "_")
+                .replace(" ", "_")
+                .lowercase()
+            
+            // Check if model already exists
+            val existingModel = availableModels.find { it.id == modelId }
+            if (existingModel != null) {
+                Log.d(TAG, "Model already exists: $modelId")
+                return@withContext Result.success(existingModel)
+            }
+            
+            // Determine if this is a HuggingFace URL that might need authentication
+            val needsAuth = url.contains("huggingface.co") && 
+                           (url.contains("gated") || url.contains("private") || name.lowercase().contains("gemma"))
+            
+            // Create an AvailableModel from the URL
+            val availableModel = AvailableModel(
+                id = modelId,
+                name = name,
+                description = description,
+                author = if (url.contains("huggingface.co")) {
+                    // Extract author from HuggingFace URL
+                    val pathParts = url.substringAfter("huggingface.co/").split("/")
+                    if (pathParts.size >= 2) pathParts[0] else "Unknown"
+                } else "Custom",
+                downloadUrl = url,
+                size = "Unknown", // We'll get the actual size during download
+                modelType = ModelType.TEXT_ONLY, // Default to text, could be enhanced to detect multimodal
+                quantization = if (url.contains("q8")) "Q8" else if (url.contains("q4")) "Q4" else "Unknown",
+                contextLength = if (url.contains("seq128")) 128 else 0,
+                tags = listOf("Custom", "URL Download"),
+                needsHuggingFaceAuth = needsAuth,
+                requirements = ModelRequirements(
+                    minRam = "Unknown",
+                    recommendedRam = "Unknown"
+                )
+            )
+            
+            // Use the existing download infrastructure
+            val result = downloadManager.downloadModel(availableModel, onProgress)
+            
+            return@withContext result.fold(
+                onSuccess = { model ->
+                    // Add to available models list
+                    availableModels.add(model)
+                    
+                    // Save to persistence in background to avoid blocking
+                    backgroundScope.launch {
+                        savePersistedModels()
+                    }
+                    
+                    Log.d(TAG, "Successfully downloaded model from URL: ${model.name}")
+                    Result.success(model)
+                },
+                onFailure = { error ->
+                    Log.e(TAG, "Failed to download model from URL: $url", error)
+                    Result.failure(error)
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error downloading model from URL: $url", e)
+            Result.failure(e)
+        }
     }
     
     override suspend fun deleteModel(modelId: String): Result<Unit> = withContext(fileOperationsDispatcher) {

@@ -8,12 +8,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.spark.domain.models.LLMModel
 import com.example.spark.domain.models.AvailableModel
+import com.example.spark.domain.models.ModelCategory
 import com.example.spark.presentation.ui.components.ModelCard
 import com.example.spark.presentation.ui.components.AvailableModelCard
 
@@ -31,11 +35,13 @@ import com.example.spark.presentation.ui.components.AvailableModelCard
 fun ModelsScreen(
     models: List<LLMModel>,
     downloadableModels: List<AvailableModel> = emptyList(),
+    categories: List<ModelCategory> = emptyList(),
     isLoading: Boolean,
     loadingModelId: String? = null,
     unloadingModelId: String? = null,
     downloadingModelId: String? = null,
     downloadProgress: Float = 0f,
+    isHuggingFaceAuthenticated: Boolean = false,
     onLoadModel: (String) -> Unit,
     onUnloadModel: (String) -> Unit,
     onAddModel: (String, String, String) -> Unit,
@@ -49,6 +55,8 @@ fun ModelsScreen(
     var showAddModelDialog by remember { mutableStateOf(false) }
     var selectedFilePath by remember { mutableStateOf("") }
     var selectedFileName by remember { mutableStateOf("") }
+    var selectedTabIndex by remember { mutableStateOf(0) }
+    var selectedCategory by remember { mutableStateOf("all") }
     val context = LocalContext.current
     
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -63,8 +71,25 @@ fun ModelsScreen(
         }
     }
     
-    var selectedTabIndex by remember { mutableStateOf(0) }
     val tabs = listOf("Local Models", "Download Models")
+    
+    // Filter downloadable models based on selected category (optimized for performance)
+    val filteredModels = remember(downloadableModels, selectedCategory) {
+        when (selectedCategory) {
+            "all" -> downloadableModels
+            "recommended" -> downloadableModels.filter { it.isRecommended }
+            "lightweight" -> downloadableModels.filter { 
+                it.size.contains("0.5", ignoreCase = true) || 
+                it.size.contains("1.5", ignoreCase = true) ||
+                it.tags.contains("mobile-optimized") 
+            }
+            "reasoning" -> downloadableModels.filter { it.tags.contains("reasoning") }
+            "multilingual" -> downloadableModels.filter { it.tags.contains("multilingual") }
+            "multimodal" -> downloadableModels.filter { it.tags.contains("multimodal") }
+            "google" -> downloadableModels.filter { it.author.equals("Google", ignoreCase = true) }
+            else -> downloadableModels.filter { it.tags.contains(selectedCategory) }
+        }
+    }
     
     Column(
         modifier = modifier
@@ -204,94 +229,137 @@ fun ModelsScreen(
                     ) {
                         items(
                             items = models,
-                            key = { model -> "${model.id}_${model.name}_${model.isLoaded}" },
+                            key = { model -> model.id },
                             contentType = { "LocalModel" }
                         ) { model ->
-                            val isModelLoading = remember(loadingModelId, model.id) {
-                                loadingModelId == model.id
-                            }
-                            val isModelUnloading = remember(unloadingModelId, model.id) {
-                                unloadingModelId == model.id
-                            }
-                            
-                            key("local_${model.id}_${isModelLoading}_${isModelUnloading}_${model.isLoaded}_${model.hashCode()}") {
-                                ModelCard(
-                                    model = model,
-                                    isLoading = isModelLoading,
-                                    isUnloading = isModelUnloading,
-                                    onLoadClick = { onLoadModel(model.id) },
-                                    onUnloadClick = { onUnloadModel(model.id) },
-                                    onDeleteClick = { onDeleteModel(model.id) }
-                                )
-                            }
+                            ModelCard(
+                                model = model,
+                                isLoading = loadingModelId == model.id,
+                                isUnloading = unloadingModelId == model.id,
+                                onLoadClick = { onLoadModel(model.id) },
+                                onUnloadClick = { onUnloadModel(model.id) },
+                                onDeleteClick = { onDeleteModel(model.id) }
+                            )
                         }
                     }
                 }
             }
             1 -> {
-                // Download Models Tab
-                Column {
-                    // Custom URL button
-                    OutlinedButton(
-                        onClick = onShowCustomUrlDialog,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 16.dp)
+                // Download Models Tab - Use LazyColumn for the entire content to enable proper scrolling
+                if (downloadableModels.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            Icons.Default.Link,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Download from Custom URL")
+                        CircularProgressIndicator()
                     }
-                    
-                    if (downloadableModels.isEmpty()) {
-                        Box(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator()
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(bottom = 16.dp),
+                        modifier = Modifier.fillMaxSize(),
+                        // Performance optimizations
+                        userScrollEnabled = true,
+                        reverseLayout = false
+                    ) {
+                        // Custom URL button
+                        item {
+                            OutlinedButton(
+                                onClick = onShowCustomUrlDialog,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(
+                                    Icons.Default.Link,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Download from Custom URL")
+                            }
                         }
-                    } else {
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            contentPadding = PaddingValues(bottom = 16.dp),
-                            userScrollEnabled = true,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            items(
-                                items = downloadableModels,
-                                key = { model -> "${model.id}_${model.name}_${model.size}" },
-                                contentType = { "AvailableModel" }
-                            ) { availableModel ->
-                                val isDownloadingThis = remember(downloadingModelId, availableModel.id) {
-                                    downloadingModelId == availableModel.id
-                                }
-                                val isAlreadyDownloaded = remember(
-                                    models.size, 
-                                    availableModel.id, 
-                                    models.hashCode(),
-                                    models.map { it.id }.sorted().hashCode() // More specific key for model IDs
+                        
+                        // Category filters (simplified)
+                        if (categories.isNotEmpty()) {
+                            item {
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    contentPadding = PaddingValues(vertical = 4.dp)
                                 ) {
-                                    models.any { it.id == availableModel.id }
-                                }
-                                val currentProgress = remember(downloadProgress, isDownloadingThis) {
-                                    if (isDownloadingThis) downloadProgress else 0f
-                                }
-                                
-                                key("download_${availableModel.id}_${isDownloadingThis}_${isAlreadyDownloaded}_${availableModel.hashCode()}") {
-                                    AvailableModelCard(
-                                        model = availableModel,
-                                        isDownloading = isDownloadingThis,
-                                        downloadProgress = currentProgress,
-                                        isAlreadyDownloaded = isAlreadyDownloaded,
-                                        onDownload = onDownloadModel,
-                                        onCancelDownload = onCancelDownload
-                                    )
+                                    item {
+                                        FilterChip(
+                                            onClick = { selectedCategory = "all" },
+                                            label = { Text("All", style = MaterialTheme.typography.labelMedium) },
+                                            selected = selectedCategory == "all"
+                                        )
+                                    }
+                                    
+                                    items(categories) { category ->
+                                        FilterChip(
+                                            onClick = { selectedCategory = category.id },
+                                            label = { Text(category.name, style = MaterialTheme.typography.labelMedium) },
+                                            selected = selectedCategory == category.id
+                                        )
+                                    }
                                 }
                             }
+                        }
+                        
+                        // HuggingFace authentication status (simplified)
+                        if (!isHuggingFaceAuthenticated && downloadableModels.any { it.needsHuggingFaceAuth }) {
+                            item {
+                                OutlinedCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.outlinedCardColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.1f)
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "⚠️ Some models need HuggingFace login",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.secondary,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(
+                                            onClick = onShowHuggingFaceSettings
+                                        ) {
+                                            Text("Login", style = MaterialTheme.typography.labelMedium)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Show filtered count (only if filtered)
+                        if (selectedCategory != "all" && filteredModels.size != downloadableModels.size) {
+                            item {
+                                Text(
+                                    text = "${filteredModels.size} models",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        
+                        // Model cards
+                        items(
+                            items = filteredModels,
+                            key = { model -> model.id },
+                            contentType = { "AvailableModel" }
+                        ) { availableModel ->
+                            AvailableModelCard(
+                                model = availableModel,
+                                isDownloading = downloadingModelId == availableModel.id,
+                                downloadProgress = if (downloadingModelId == availableModel.id) downloadProgress else 0f,
+                                isAlreadyDownloaded = models.any { it.id == availableModel.id },
+                                isHuggingFaceAuthenticated = isHuggingFaceAuthenticated,
+                                onDownload = onDownloadModel,
+                                onCancelDownload = onCancelDownload,
+                                onShowHuggingFaceAuth = onShowHuggingFaceSettings
+                            )
                         }
                     }
                 }
