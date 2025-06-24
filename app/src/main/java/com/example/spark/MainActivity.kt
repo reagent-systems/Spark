@@ -70,10 +70,6 @@ class MainActivity : ComponentActivity() {
         if (::viewModel.isInitialized) {
             viewModel.stopServer()
         }
-        // Clean up auth service
-        if (::huggingFaceAuth.isInitialized) {
-            huggingFaceAuth.dispose()
-        }
     }
 }
 

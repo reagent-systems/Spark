@@ -130,6 +130,5 @@ data class ServerUiState(
     val serverLocalIp: String = "",
     val modelConfig: ModelConfig = ModelConfig(),
     val isLoading: Boolean = false,
-    val loadingMessage: String? = null,
     val errorMessage: String? = null
 ) 

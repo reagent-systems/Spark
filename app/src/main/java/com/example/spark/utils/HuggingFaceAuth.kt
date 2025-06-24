@@ -27,7 +27,7 @@ class HuggingFaceAuth(private val context: Context) {
     suspend fun authenticate(): Result<String> = suspendCancellableCoroutine { continuation ->
         try {
             // Check if we already have a valid token
-            val existingToken = getStoredAccessToken()
+            val existingToken = getAccessToken()
             if (existingToken != null) {
                 Log.d(TAG, "Using existing access token")
                 continuation.resume(Result.success(existingToken))
@@ -72,16 +72,8 @@ class HuggingFaceAuth(private val context: Context) {
         Log.d(TAG, "Access token stored successfully")
     }
     
-    fun storeAccessToken(token: String) {
-        saveAccessToken(token)
-    }
-    
     fun getAccessToken(): String? {
         return sharedPrefs.getString(KEY_ACCESS_TOKEN, null)
-    }
-    
-    fun getStoredAccessToken(): String? {
-        return getAccessToken()
     }
     
     fun clearAccessToken() {
@@ -92,7 +84,7 @@ class HuggingFaceAuth(private val context: Context) {
     }
     
     fun isAuthenticated(): Boolean {
-        return getStoredAccessToken() != null
+        return getAccessToken() != null
     }
     
     fun signOut() {
@@ -105,14 +97,5 @@ class HuggingFaceAuth(private val context: Context) {
     // Simplified initialization - no longer needs activity registration
     fun initialize(activity: ComponentActivity) {
         Log.d(TAG, "HuggingFace auth initialized")
-    }
-    
-    fun handleIntent(intent: Intent?) {
-        // No longer needed for simplified approach
-    }
-    
-    fun dispose() {
-        // No resources to dispose
-        Log.d(TAG, "HuggingFace auth disposed")
     }
 } 

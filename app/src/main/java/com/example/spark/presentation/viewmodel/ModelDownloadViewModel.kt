@@ -226,7 +226,7 @@ class ModelDownloadViewModel(
     }
     
     fun submitHuggingFaceToken(token: String) {
-        huggingFaceAuth.storeAccessToken(token)
+        huggingFaceAuth.saveAccessToken(token)
         _uiState.update { 
             it.copy(
                 showHuggingFaceTokenDialog = false,
