@@ -28,7 +28,8 @@ data class ModelConfig(
     val temperature: Float = 0.8f,
     val topK: Int = 40,
     val randomSeed: Int = 0,
-    val systemPrompt: String = ""
+    val systemPrompt: String = "",
+    val enableStreaming: Boolean = false
 )
 
 @Serializable

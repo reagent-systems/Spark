@@ -286,6 +286,8 @@ fun SparkApp(
                         availableModels = uiState.availableModels,
                         currentMessage = uiState.currentMessage,
                         isGenerating = uiState.isGenerating,
+                        streamingMessageId = uiState.streamingMessageId,
+                        streamingContent = uiState.streamingContent,
                         modelConfig = uiState.modelConfig,
                         onCreateChatSession = viewModel::createChatSession,
                         onSelectChatSession = viewModel::selectChatSession,

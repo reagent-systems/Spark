@@ -55,6 +55,8 @@ fun ChatScreen(
     availableModels: List<LLMModel>,
     currentMessage: String,
     isGenerating: Boolean,
+    streamingMessageId: String?,
+    streamingContent: String,
     modelConfig: ModelConfig,
     onCreateChatSession: (String, String, String) -> Unit,
     onSelectChatSession: (String) -> Unit,
@@ -101,6 +103,21 @@ fun ChatScreen(
                             // Ignore scroll errors
                         }
                     }
+                }
+            }
+        }
+    }
+    
+    // Auto-scroll to bottom when streaming content is being updated
+    LaunchedEffect(streamingContent.length) {
+        if (streamingMessageId != null && streamingContent.isNotEmpty()) {
+            coroutineScope.launch {
+                try {
+                    // Calculate total items including streaming message
+                    val totalItems = (currentChatSession?.messages?.size ?: 0) + 1
+                    listState.animateScrollToItem(totalItems - 1)
+                } catch (e: Exception) {
+                    // Ignore scroll errors
                 }
             }
         }
@@ -308,8 +325,58 @@ fun ChatScreen(
                             }
                         }
                         
-                        // Show typing indicator when generating
-                        if (isGenerating) {
+                        // Show streaming message when streaming is active
+                        if (streamingMessageId != null && streamingContent.isNotEmpty()) {
+                            // Debug logging for streaming display
+                            android.util.Log.d("ChatScreen", "Displaying streaming content: length=${streamingContent.length}, id=$streamingMessageId")
+                            
+                            item(key = "streaming_message_$streamingMessageId", contentType = "StreamingMessage") {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Start
+                                ) {
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                                        ),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                                        shape = RoundedCornerShape(
+                                            topStart = 18.dp,
+                                            topEnd = 18.dp,
+                                            bottomStart = 6.dp,
+                                            bottomEnd = 18.dp
+                                        ),
+                                        modifier = Modifier.widthIn(max = 320.dp) // Slightly wider for better readability
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text(
+                                                text = streamingContent,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.2 // Better line spacing
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                // Faster typing indicator for streaming
+                                                FastTypingIndicator()
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "streaming...",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
+                                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Show typing indicator when generating (non-streaming)
+                        if (isGenerating && streamingMessageId == null) {
                             item(key = "typing_indicator", contentType = "TypingIndicator") {
                                 key("typing_${isGenerating}") {
                                     Row(
@@ -500,7 +567,11 @@ fun ChatScreen(
             availableModels = availableModels,
             loadedModels = loadedModels,
             onDismiss = { showNewChatDialog = false },
-            onConfirm = { name, modelId, systemPrompt ->
+            onConfirm = { name, modelId, systemPrompt, enableStreaming ->
+                // Update model config with streaming setting
+                val newConfig = modelConfig.copy(enableStreaming = enableStreaming)
+                onUpdateModelConfig(newConfig)
+                
                 // Model will be automatically loaded by the ViewModel
                 onCreateChatSession(name, modelId, systemPrompt)
                 showNewChatDialog = false
@@ -662,11 +733,12 @@ fun NewChatDialog(
     availableModels: List<LLMModel>,
     loadedModels: List<LLMModel>,
     onDismiss: () -> Unit,
-    onConfirm: (String, String, String) -> Unit // name, modelId, systemPrompt
+    onConfirm: (String, String, String, Boolean) -> Unit // name, modelId, systemPrompt, enableStreaming
 ) {
     var chatName by remember { mutableStateOf("") }
     var selectedModelId by remember { mutableStateOf(availableModels.firstOrNull()?.id ?: "") }
     var systemPrompt by remember { mutableStateOf("") }
+    var enableStreaming by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(0) }
     
@@ -826,6 +898,59 @@ fun NewChatDialog(
                                 }
                             }
                             
+                            // Streaming Toggle
+                            Text(
+                                text = "Response Options",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                            )
+                            
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (enableStreaming) 
+                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                    else 
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Stream,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Enable Streaming",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                                            )
+                                        }
+                                        Text(
+                                            text = "Show response as it's being generated",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(start = 24.dp)
+                                        )
+                                    }
+                                    Switch(
+                                        checked = enableStreaming,
+                                        onCheckedChange = { enableStreaming = it }
+                                    )
+                                }
+                            }
+                            
                             if (availableModels.isEmpty()) {
                                 Card(
                                     colors = CardDefaults.cardColors(
@@ -968,7 +1093,7 @@ fun NewChatDialog(
                     Button(
                         onClick = {
                             if (chatName.isNotBlank() && selectedModelId.isNotBlank()) {
-                                onConfirm(chatName.trim(), selectedModelId, systemPrompt.take(1000))
+                                onConfirm(chatName.trim(), selectedModelId, systemPrompt.take(1000), enableStreaming)
                             }
                         },
                         enabled = chatName.isNotBlank() && selectedModelId.isNotBlank() && availableModels.isNotEmpty(),
@@ -1021,6 +1146,57 @@ fun TypingIndicator() {
     }
 }
 
+@Composable
+fun FastTypingIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "fast_typing")
+    
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(3) { index ->
+            val animationDelay = index * 80 // Much faster staggered animation
+            
+            val scale by infiniteTransition.animateFloat(
+                initialValue = 0.6f,
+                targetValue = 1.3f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(
+                        durationMillis = 240, // Faster animation
+                        delayMillis = animationDelay,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                    ),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "fast_dot_scale_$index"
+            )
+            
+            val alpha by infiniteTransition.animateFloat(
+                initialValue = 0.5f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(
+                        durationMillis = 240,
+                        delayMillis = animationDelay
+                    ),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "fast_dot_alpha_$index"
+            )
+            
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .scale(scale)
+                    .background(
+                        MaterialTheme.colorScheme.primary.copy(alpha = alpha),
+                        shape = androidx.compose.foundation.shape.CircleShape
+                    )
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelConfigDialog(
@@ -1034,6 +1210,7 @@ fun ModelConfigDialog(
     var temperature by remember { mutableStateOf(currentConfig.temperature.toString()) }
     var topK by remember { mutableStateOf(currentConfig.topK.toString()) }
     var randomSeed by remember { mutableStateOf(currentConfig.randomSeed.toString()) }
+    var enableStreaming by remember { mutableStateOf(currentConfig.enableStreaming) }
     var systemPrompt by remember { 
         mutableStateOf(currentChatSession?.systemPrompt ?: currentConfig.systemPrompt) 
     }
@@ -1305,6 +1482,31 @@ fun ModelConfigDialog(
                             
                             Spacer(modifier = Modifier.height(16.dp))
                             
+                            // Streaming Toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Enable Streaming",
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                    Text(
+                                        text = "Show response as it's being generated",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = enableStreaming,
+                                    onCheckedChange = { enableStreaming = it }
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+                            
                             // Quick preset buttons
                             Text(
                                 text = "Quick Presets:",
@@ -1375,7 +1577,8 @@ fun ModelConfigDialog(
                                     temperature = temperature.toFloatOrNull()?.coerceIn(0.0f, 2.0f) ?: currentConfig.temperature,
                                     topK = topK.toIntOrNull()?.coerceIn(1, 100) ?: currentConfig.topK,
                                     randomSeed = randomSeed.toIntOrNull() ?: currentConfig.randomSeed,
-                                    systemPrompt = currentConfig.systemPrompt // Keep model config system prompt unchanged
+                                    systemPrompt = currentConfig.systemPrompt, // Keep model config system prompt unchanged
+                                    enableStreaming = enableStreaming
                                 )
                                 onConfigUpdate(newConfig)
                                 

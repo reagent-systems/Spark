@@ -112,13 +112,16 @@ class ChatViewModel(
         
         generationJob?.cancel() // Cancel any existing generation
         generationJob = viewModelScope.launch {
-            _uiState.update { it.copy(isGenerating = true) }
+            // Set generating state immediately for instant visual feedback
+            _uiState.update { 
+                it.copy(
+                    isGenerating = true,
+                    currentMessage = "" // Clear input field immediately
+                ) 
+            }
             
             try {
-                // Ensure the correct model is loaded before sending message
-                ensureCorrectModelLoaded(currentSession.modelId)
-                
-                // Add user message
+                // Add user message first for immediate UI feedback
                 val userMessage = ChatMessage(
                     id = UUID.randomUUID().toString(),
                     content = content,
@@ -129,14 +132,14 @@ class ChatViewModel(
                 
                 llmRepository.addMessageToSession(currentSession.id, userMessage)
                 
-                // Refresh the UI to show the user message immediately
+                // Update UI with user message immediately
                 val updatedSession = llmRepository.getChatSession(currentSession.id)
                 _uiState.update {
-                    it.copy(
-                        currentChatSession = updatedSession,
-                        currentMessage = "" // Clear the input field
-                    )
+                    it.copy(currentChatSession = updatedSession)
                 }
+                
+                // Ensure the correct model is loaded (in parallel with UI update)
+                ensureCorrectModelLoaded(currentSession.modelId)
                 
                 // Construct the full prompt with system prompt and conversation history
                 val fullPrompt = buildPrompt(
@@ -146,27 +149,85 @@ class ChatViewModel(
                 )
                 
                 // Generate AI response using the constructed prompt
-                val response = llmRepository.generateResponse(
-                    currentSession.modelId,
-                    fullPrompt,
-                    modelConfig
-                ).first() // Get the complete response
-                
-                // Create AI message with complete response
-                val aiMessage = ChatMessage(
-                    id = UUID.randomUUID().toString(),
-                    content = response,
-                    isUser = false,
-                    timestamp = System.currentTimeMillis(),
-                    modelId = currentSession.modelId
-                )
-                
-                llmRepository.addMessageToSession(currentSession.id, aiMessage)
-                
-                // Update UI with the complete response
-                val finalSession = llmRepository.getChatSession(currentSession.id)
-                _uiState.update {
-                    it.copy(currentChatSession = finalSession)
+                if (modelConfig.enableStreaming) {
+                    // Handle real streaming response
+                    val aiMessageId = UUID.randomUUID().toString()
+                    
+                    // Initialize streaming state with empty content
+                    _uiState.update {
+                        it.copy(
+                            streamingMessageId = aiMessageId,
+                            streamingContent = "" // Start with empty content
+                        )
+                    }
+                    
+                    var finalAccumulatedContent = ""
+                    
+                    llmRepository.generateResponse(
+                        currentSession.modelId,
+                        fullPrompt,
+                        modelConfig
+                    ).collect { cumulativeResponse ->
+                        // MediaPipe tokens are now properly accumulated in the repository
+                        // This receives the complete accumulated text: "A" -> "A light" -> "A light year" etc.
+                        finalAccumulatedContent = cumulativeResponse
+                        
+                        // Debug logging
+                        android.util.Log.d("ChatViewModel", "Streaming update: length=${cumulativeResponse.length}, content='${cumulativeResponse.take(100)}...'")
+                        
+                        // Update UI with the complete cumulative content
+                        _uiState.update { currentState ->
+                            currentState.copy(streamingContent = cumulativeResponse)
+                        }
+                    }
+                    
+                    // After streaming completes, use the final accumulated content
+                    val accumulatedContent = finalAccumulatedContent
+                    
+                    // Create final AI message with complete content
+                    val aiMessage = ChatMessage(
+                        id = aiMessageId,
+                        content = accumulatedContent,
+                        isUser = false,
+                        timestamp = System.currentTimeMillis(),
+                        modelId = currentSession.modelId
+                    )
+                    
+                    llmRepository.addMessageToSession(currentSession.id, aiMessage)
+                    
+                    // Clear streaming state and update session
+                    val finalSession = llmRepository.getChatSession(currentSession.id)
+                    _uiState.update {
+                        it.copy(
+                            currentChatSession = finalSession,
+                            streamingMessageId = null,
+                            streamingContent = ""
+                        )
+                    }
+                } else {
+                    // Handle non-streaming response (original behavior)
+                    val response = llmRepository.generateResponse(
+                        currentSession.modelId,
+                        fullPrompt,
+                        modelConfig
+                    ).first() // Get the complete response
+                    
+                    // Create AI message with complete response
+                    val aiMessage = ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        content = response,
+                        isUser = false,
+                        timestamp = System.currentTimeMillis(),
+                        modelId = currentSession.modelId
+                    )
+                    
+                    llmRepository.addMessageToSession(currentSession.id, aiMessage)
+                    
+                    // Update UI with the complete response
+                    val finalSession = llmRepository.getChatSession(currentSession.id)
+                    _uiState.update {
+                        it.copy(currentChatSession = finalSession)
+                    }
                 }
                 
                 // Mark generation as complete
@@ -178,6 +239,8 @@ class ChatViewModel(
                 _uiState.update {
                     it.copy(
                         isGenerating = false,
+                        streamingMessageId = null,
+                        streamingContent = "",
                         errorMessage = if (e is kotlinx.coroutines.CancellationException) {
                             null // Don't show error for user cancellation
                         } else {
@@ -224,7 +287,11 @@ class ChatViewModel(
         generationJob?.cancel()
         generationJob = null
         _uiState.update {
-            it.copy(isGenerating = false)
+            it.copy(
+                isGenerating = false,
+                streamingMessageId = null,
+                streamingContent = ""
+            )
         }
     }
     
@@ -360,5 +427,7 @@ data class ChatUiState(
     val isLoadingModel: Boolean = false,
     val loadingModelId: String? = null,
     val loadingModelName: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val streamingMessageId: String? = null,
+    val streamingContent: String = ""
 ) 

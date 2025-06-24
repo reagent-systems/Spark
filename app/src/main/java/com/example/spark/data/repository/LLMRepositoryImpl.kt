@@ -16,7 +16,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.FlowCollector
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.callbackFlow
 import java.io.File
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -178,28 +184,33 @@ class LLMRepositoryImpl(
         }
     }
     
-    // Remove fake streaming - MediaPipe doesn't support real streaming
+    // Smart response generation - choose streaming or non-streaming based on config
     override suspend fun generateResponse(
         modelId: String,
         prompt: String,
         config: ModelConfig
-    ): Flow<String> = flow {
-        val llmInference = loadedModels[modelId]
-            ?: throw Exception("Model not loaded")
-        
-        try {
-            // Use inference dispatcher for CPU-intensive text generation
-            val result = withContext(inferenceDispatcher) {
-                ensureActive() // Check for cancellation
-                llmInference.generateResponse(prompt)
+    ): Flow<String> = 
+        if (config.enableStreaming) {
+            generateResponseStream(modelId, prompt, config)
+        } else {
+            flow {
+                val llmInference = loadedModels[modelId]
+                    ?: throw Exception("Model not loaded")
+                
+                try {
+                    // Use inference dispatcher for CPU-intensive text generation
+                    val result = withContext(inferenceDispatcher) {
+                        ensureActive() // Check for cancellation
+                        llmInference.generateResponse(prompt)
+                    }
+                    
+                    // Emit the complete response (no streaming)
+                    emit(result)
+                } catch (e: Exception) {
+                    throw e
+                }
             }
-            
-            // Emit the complete response (no fake streaming)
-            emit(result)
-        } catch (e: Exception) {
-            throw e
         }
-    }
     
     override suspend fun generateResponseSync(
         modelId: String,
@@ -217,6 +228,60 @@ class LLMRepositoryImpl(
             Result.failure(e)
         }
     }
+    
+    override suspend fun generateResponseStream(
+        modelId: String,
+        prompt: String,
+        config: ModelConfig
+    ): Flow<String> = callbackFlow {
+        val llmInference = loadedModels[modelId]
+            ?: throw Exception("Model not loaded: $modelId")
+        
+        try {
+            Log.d(TAG, "Starting real streaming for model: $modelId")
+            
+            // StringBuilder to accumulate tokens
+            val accumulatedResponse = StringBuilder()
+            
+            withContext(inferenceDispatcher) {
+                ensureActive() // Check for cancellation
+                
+                // Use MediaPipe's true streaming with generateResponseAsync
+                llmInference.generateResponseAsync(prompt) { partialResult, done ->
+                    try {
+                        // MediaPipe sends individual tokens, not cumulative text
+                        // We need to accumulate them ourselves
+                        accumulatedResponse.append(partialResult)
+                        val cumulativeText = accumulatedResponse.toString()
+                        
+                        // Debug logging
+                        Log.d(TAG, "MediaPipe callback: token='$partialResult', accumulated_length=${cumulativeText.length}, done=$done")
+                        
+                        // Send the cumulative response through the channel
+                        trySend(cumulativeText).isSuccess
+                        
+                        if (done) {
+                            Log.d(TAG, "Streaming completed for model: $modelId, final length: ${cumulativeText.length}")
+                            close() // Close the channel when done
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error in streaming callback", e)
+                        close(e) // Close with error
+                    }
+                }
+            }
+            
+            // Wait for the channel to be closed
+            awaitClose {
+                Log.d(TAG, "Streaming channel closed for model: $modelId")
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in generateResponseStream", e)
+            close(e)
+        }
+    }
+
     
     override suspend fun addModel(
         filePath: String,
