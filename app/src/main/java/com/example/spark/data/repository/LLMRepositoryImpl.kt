@@ -104,6 +104,7 @@ class LLMRepositoryImpl(
                     availableModels[index] = availableModels[index].copy(isLoaded = true)
                 }
                 
+                savePersistedModels() // Save to persistence
                 Log.d(TAG, "Successfully loaded model: ${model.name}")
                 Result.success(Unit)
             }
@@ -134,6 +135,7 @@ class LLMRepositoryImpl(
                     Log.d(TAG, "Updated model status to unloaded: ${model.name}")
                 }
                 
+                savePersistedModels() // Save to persistence
                 Log.d(TAG, "Successfully unloaded model: ${model.name}")
                 Result.success(Unit)
             }

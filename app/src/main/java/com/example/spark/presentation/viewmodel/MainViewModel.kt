@@ -58,6 +58,11 @@ class MainViewModel(
     init {
         // Combine states from all delegate ViewModels
         combineViewModelStates()
+        
+        // Set up callback for chat model state changes
+        chatViewModel.setModelStateChangeCallback {
+            modelManagementViewModel.refreshModels()
+        }
     }
     
     private fun combineViewModelStates() {
@@ -77,9 +82,9 @@ class MainViewModel(
                     isServerRunning = server.isServerRunning,
                     serverPort = server.serverPort,
                     serverLocalIp = server.serverLocalIp,
-                    isLoading = modelMgmt.isLoading || server.isLoading,
-                    loadingModelId = modelMgmt.loadingModelId,
-                    loadingModelName = modelMgmt.loadingModelName,
+                    isLoading = modelMgmt.isLoading || server.isLoading || chat.isLoadingModel,
+                    loadingModelId = modelMgmt.loadingModelId ?: chat.loadingModelId,
+                    loadingModelName = modelMgmt.loadingModelName ?: chat.loadingModelName,
                     downloadingModelId = download.downloadingModelId,
                     downloadProgress = download.downloadProgress,
                     errorMessage = modelMgmt.errorMessage ?: download.errorMessage ?: chat.errorMessage ?: server.errorMessage,

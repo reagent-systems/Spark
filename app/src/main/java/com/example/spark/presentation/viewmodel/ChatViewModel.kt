@@ -18,6 +18,9 @@ class ChatViewModel(
     
     private var generationJob: Job? = null
     
+    // Callback for when models are loaded/unloaded
+    private var onModelStateChanged: (() -> Unit)? = null
+    
     init {
         loadChatSessions()
     }
@@ -195,6 +198,10 @@ class ChatViewModel(
         _uiState.update { it.copy(currentMessage = message) }
     }
     
+    fun setModelStateChangeCallback(callback: () -> Unit) {
+        onModelStateChanged = callback
+    }
+    
     private suspend fun ensureCorrectModelLoaded(requiredModelId: String) {
         try {
             val currentLoadedModels = llmRepository.getLoadedModels()
@@ -215,6 +222,15 @@ class ChatViewModel(
                 return
             }
             
+            // Set loading state
+            _uiState.update {
+                it.copy(
+                    isLoadingModel = true,
+                    loadingModelId = requiredModelId,
+                    loadingModelName = requiredModel.name
+                )
+            }
+            
             // If there are other models loaded, unload them first to free memory
             if (currentLoadedModels.isNotEmpty()) {
                 for (loadedModel in currentLoadedModels) {
@@ -229,10 +245,22 @@ class ChatViewModel(
             loadResult.fold(
                 onSuccess = {
                     // Model loaded successfully
+                    _uiState.update {
+                        it.copy(
+                            isLoadingModel = false,
+                            loadingModelId = null,
+                            loadingModelName = null
+                        )
+                    }
+                    // Notify that model state changed
+                    onModelStateChanged?.invoke()
                 },
                 onFailure = { error ->
                     _uiState.update {
                         it.copy(
+                            isLoadingModel = false,
+                            loadingModelId = null,
+                            loadingModelName = null,
                             errorMessage = "Failed to load model ${requiredModel.name}: ${error.message}"
                         )
                     }
@@ -241,6 +269,9 @@ class ChatViewModel(
         } catch (e: Exception) {
             _uiState.update {
                 it.copy(
+                    isLoadingModel = false,
+                    loadingModelId = null,
+                    loadingModelName = null,
                     errorMessage = "Failed to manage model loading: ${e.message}"
                 )
             }
@@ -261,5 +292,8 @@ data class ChatUiState(
     val currentChatSession: ChatSession? = null,
     val currentMessage: String = "",
     val isGenerating: Boolean = false,
+    val isLoadingModel: Boolean = false,
+    val loadingModelId: String? = null,
+    val loadingModelName: String? = null,
     val errorMessage: String? = null
 ) 
