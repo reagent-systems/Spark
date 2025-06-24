@@ -17,12 +17,16 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
+import io.ktor.http.ContentType
+import io.ktor.server.response.respondTextWriter
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -144,42 +148,97 @@ class ApiServer(
                                     maxTokens = if (request.max_tokens == 1000) defaultModelConfig.maxTokens else request.max_tokens,
                                     temperature = if (request.temperature == 0.8f) defaultModelConfig.temperature else request.temperature,
                                     topK = if (request.top_k == 40) defaultModelConfig.topK else request.top_k,
-                                    randomSeed = defaultModelConfig.randomSeed
+                                    randomSeed = defaultModelConfig.randomSeed,
+                                    enableStreaming = request.stream
                                 )
                                 
-                                // Generate response on background dispatcher
-                                val result = withContext(Dispatchers.Default) {
-                                    llmRepository.generateResponseSync(
-                                        request.model,
-                                        prompt,
-                                        config
-                                    )
-                                }
-                                
-                                result.fold(
-                                    onSuccess = { response ->
-                                        val chatResponse = ChatCompletionResponse(
-                                            id = "chatcmpl-${UUID.randomUUID()}",
-                                            created = System.currentTimeMillis() / 1000,
-                                            model = request.model,
-                                            choices = listOf(
-                                                Choice(
-                                                    index = 0,
-                                                    message = Message("assistant", response),
-                                                    finish_reason = "stop"
+                                if (request.stream) {
+                                    // Handle streaming response with Server-Sent Events
+                                    call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                                        val chatId = "chatcmpl-${UUID.randomUUID()}"
+                                        val created = System.currentTimeMillis() / 1000
+                                        
+                                        try {
+                                            withContext(Dispatchers.Default) {
+                                                llmRepository.generateResponse(request.model, prompt, config).collect { chunk ->
+                                                    val chunkResponse = ChatCompletionChunk(
+                                                        id = chatId,
+                                                        created = created,
+                                                        model = request.model,
+                                                        choices = listOf(
+                                                            ChoiceChunk(
+                                                                index = 0,
+                                                                delta = MessageDelta(content = chunk)
+                                                            )
+                                                        )
+                                                    )
+                                                    
+                                                    val jsonString = Json.encodeToString(ChatCompletionChunk.serializer(), chunkResponse)
+                                                    write("data: $jsonString\n\n")
+                                                    flush()
+                                                }
+                                            }
+                                            
+                                            // Send final chunk to indicate completion
+                                            val finalChunk = ChatCompletionChunk(
+                                                id = chatId,
+                                                created = created,
+                                                model = request.model,
+                                                choices = listOf(
+                                                    ChoiceChunk(
+                                                        index = 0,
+                                                        delta = MessageDelta(),
+                                                        finish_reason = "stop"
+                                                    )
                                                 )
                                             )
-                                        )
-                                        call.respond(chatResponse)
-                                    },
-                                    onFailure = { error ->
-                                        Log.e("ApiServer", "Error generating response", error)
-                                        call.respond(
-                                            HttpStatusCode.InternalServerError,
-                                            ErrorResponse(ErrorDetail(error.message ?: "Unknown error", "generation_error"))
+                                            
+                                            val finalJsonString = Json.encodeToString(ChatCompletionChunk.serializer(), finalChunk)
+                                            write("data: $finalJsonString\n\n")
+                                            write("data: [DONE]\n\n")
+                                            flush()
+                                            
+                                        } catch (e: Exception) {
+                                            Log.e("ApiServer", "Error in streaming response", e)
+                                            write("data: {\"error\": \"${e.message}\"}\n\n")
+                                            flush()
+                                        }
+                                    }
+                                } else {
+                                    // Handle non-streaming response (original behavior)
+                                    val result = withContext(Dispatchers.Default) {
+                                        llmRepository.generateResponseSync(
+                                            request.model,
+                                            prompt,
+                                            config
                                         )
                                     }
-                                )
+                                    
+                                    result.fold(
+                                        onSuccess = { response ->
+                                            val chatResponse = ChatCompletionResponse(
+                                                id = "chatcmpl-${UUID.randomUUID()}",
+                                                created = System.currentTimeMillis() / 1000,
+                                                model = request.model,
+                                                choices = listOf(
+                                                    Choice(
+                                                        index = 0,
+                                                        message = Message("assistant", response),
+                                                        finish_reason = "stop"
+                                                    )
+                                                )
+                                            )
+                                            call.respond(chatResponse)
+                                        },
+                                        onFailure = { error ->
+                                            Log.e("ApiServer", "Error generating response", error)
+                                            call.respond(
+                                                HttpStatusCode.InternalServerError,
+                                                ErrorResponse(ErrorDetail(error.message ?: "Unknown error", "generation_error"))
+                                            )
+                                        }
+                                    )
+                                }
                             } catch (e: Exception) {
                                 Log.e("ApiServer", "Error in chat completion", e)
                                 call.respond(

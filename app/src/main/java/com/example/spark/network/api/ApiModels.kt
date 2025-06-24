@@ -66,4 +66,27 @@ data class ErrorDetail(
     val message: String,
     val type: String,
     val code: String? = null
+)
+
+// Streaming response models
+@Serializable
+data class ChatCompletionChunk(
+    val id: String,
+    val `object`: String = "chat.completion.chunk",
+    val created: Long,
+    val model: String,
+    val choices: List<ChoiceChunk>
+)
+
+@Serializable
+data class ChoiceChunk(
+    val index: Int,
+    val delta: MessageDelta,
+    val finish_reason: String? = null
+)
+
+@Serializable
+data class MessageDelta(
+    val role: String? = null,
+    val content: String? = null
 ) 

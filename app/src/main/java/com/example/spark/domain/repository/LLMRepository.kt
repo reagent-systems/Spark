@@ -20,6 +20,11 @@ interface LLMRepository {
         prompt: String, 
         config: ModelConfig
     ): Result<String>
+    suspend fun generateResponseStream(
+        modelId: String, 
+        prompt: String, 
+        config: ModelConfig
+    ): Flow<String>
     suspend fun addModel(filePath: String, name: String, description: String): Result<LLMModel>
     suspend fun removeModel(modelId: String): Result<Unit>
     suspend fun getLoadedModels(): List<LLMModel>

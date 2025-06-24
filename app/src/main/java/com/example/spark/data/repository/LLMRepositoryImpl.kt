@@ -17,6 +17,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.currentCoroutineContext
 import java.io.File
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -178,28 +180,33 @@ class LLMRepositoryImpl(
         }
     }
     
-    // Remove fake streaming - MediaPipe doesn't support real streaming
+    // Smart response generation - choose streaming or non-streaming based on config
     override suspend fun generateResponse(
         modelId: String,
         prompt: String,
         config: ModelConfig
-    ): Flow<String> = flow {
-        val llmInference = loadedModels[modelId]
-            ?: throw Exception("Model not loaded")
-        
-        try {
-            // Use inference dispatcher for CPU-intensive text generation
-            val result = withContext(inferenceDispatcher) {
-                ensureActive() // Check for cancellation
-                llmInference.generateResponse(prompt)
+    ): Flow<String> = 
+        if (config.enableStreaming) {
+            generateResponseStream(modelId, prompt, config)
+        } else {
+            flow {
+                val llmInference = loadedModels[modelId]
+                    ?: throw Exception("Model not loaded")
+                
+                try {
+                    // Use inference dispatcher for CPU-intensive text generation
+                    val result = withContext(inferenceDispatcher) {
+                        ensureActive() // Check for cancellation
+                        llmInference.generateResponse(prompt)
+                    }
+                    
+                    // Emit the complete response (no streaming)
+                    emit(result)
+                } catch (e: Exception) {
+                    throw e
+                }
             }
-            
-            // Emit the complete response (no fake streaming)
-            emit(result)
-        } catch (e: Exception) {
-            throw e
         }
-    }
     
     override suspend fun generateResponseSync(
         modelId: String,
@@ -215,6 +222,39 @@ class LLMRepositoryImpl(
             Result.success(result)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+    
+    override suspend fun generateResponseStream(
+        modelId: String,
+        prompt: String,
+        config: ModelConfig
+    ): Flow<String> = flow {
+        val llmInference = loadedModels[modelId]
+            ?: throw Exception("Model not loaded: $modelId")
+        
+        try {
+            // Use inference dispatcher for CPU-intensive text generation
+            val result = withContext(inferenceDispatcher) {
+                ensureActive() // Check for cancellation
+                llmInference.generateResponse(prompt)
+            }
+            
+            // Stream the response by word chunks for real-time effect
+            val words = result.split(" ")
+            var accumulated = ""
+            
+            for (word in words) {
+                currentCoroutineContext().ensureActive() // Check for cancellation before each chunk
+                accumulated += if (accumulated.isEmpty()) word else " $word"
+                emit(accumulated)
+                
+                // Add a small delay to create streaming effect
+                kotlinx.coroutines.delay(30)
+            }
+            
+        } catch (e: Exception) {
+            throw e
         }
     }
     

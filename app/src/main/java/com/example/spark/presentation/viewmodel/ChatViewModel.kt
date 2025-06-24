@@ -141,27 +141,75 @@ class ChatViewModel(
                 }
                 
                 // Generate AI response using current config
-                val response = llmRepository.generateResponse(
-                    currentSession.modelId,
-                    content,
-                    modelConfig
-                ).first() // Get the complete response
-                
-                // Create AI message with complete response
-                val aiMessage = ChatMessage(
-                    id = UUID.randomUUID().toString(),
-                    content = response,
-                    isUser = false,
-                    timestamp = System.currentTimeMillis(),
-                    modelId = currentSession.modelId
-                )
-                
-                llmRepository.addMessageToSession(currentSession.id, aiMessage)
-                
-                // Update UI with the complete response
-                val finalSession = llmRepository.getChatSession(currentSession.id)
-                _uiState.update {
-                    it.copy(currentChatSession = finalSession)
+                if (modelConfig.enableStreaming) {
+                    // Handle streaming response
+                    val aiMessageId = UUID.randomUUID().toString()
+                    var accumulatedContent = ""
+                    
+                    _uiState.update {
+                        it.copy(
+                            streamingMessageId = aiMessageId,
+                            streamingContent = ""
+                        )
+                    }
+                    
+                    llmRepository.generateResponse(
+                        currentSession.modelId,
+                        content,
+                        modelConfig
+                    ).collect { chunk ->
+                        accumulatedContent += chunk
+                        
+                        // Update UI with streaming content
+                        _uiState.update {
+                            it.copy(streamingContent = accumulatedContent)
+                        }
+                    }
+                    
+                    // Create final AI message with complete content
+                    val aiMessage = ChatMessage(
+                        id = aiMessageId,
+                        content = accumulatedContent,
+                        isUser = false,
+                        timestamp = System.currentTimeMillis(),
+                        modelId = currentSession.modelId
+                    )
+                    
+                    llmRepository.addMessageToSession(currentSession.id, aiMessage)
+                    
+                    // Clear streaming state and update session
+                    val finalSession = llmRepository.getChatSession(currentSession.id)
+                    _uiState.update {
+                        it.copy(
+                            currentChatSession = finalSession,
+                            streamingMessageId = null,
+                            streamingContent = ""
+                        )
+                    }
+                } else {
+                    // Handle non-streaming response (original behavior)
+                    val response = llmRepository.generateResponse(
+                        currentSession.modelId,
+                        content,
+                        modelConfig
+                    ).first() // Get the complete response
+                    
+                    // Create AI message with complete response
+                    val aiMessage = ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        content = response,
+                        isUser = false,
+                        timestamp = System.currentTimeMillis(),
+                        modelId = currentSession.modelId
+                    )
+                    
+                    llmRepository.addMessageToSession(currentSession.id, aiMessage)
+                    
+                    // Update UI with the complete response
+                    val finalSession = llmRepository.getChatSession(currentSession.id)
+                    _uiState.update {
+                        it.copy(currentChatSession = finalSession)
+                    }
                 }
                 
                 // Mark generation as complete
@@ -173,6 +221,8 @@ class ChatViewModel(
                 _uiState.update {
                     it.copy(
                         isGenerating = false,
+                        streamingMessageId = null,
+                        streamingContent = "",
                         errorMessage = if (e is kotlinx.coroutines.CancellationException) {
                             null // Don't show error for user cancellation
                         } else {
@@ -190,7 +240,11 @@ class ChatViewModel(
         generationJob?.cancel()
         generationJob = null
         _uiState.update {
-            it.copy(isGenerating = false)
+            it.copy(
+                isGenerating = false,
+                streamingMessageId = null,
+                streamingContent = ""
+            )
         }
     }
     
@@ -295,5 +349,7 @@ data class ChatUiState(
     val isLoadingModel: Boolean = false,
     val loadingModelId: String? = null,
     val loadingModelName: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val streamingMessageId: String? = null,
+    val streamingContent: String = ""
 ) 
