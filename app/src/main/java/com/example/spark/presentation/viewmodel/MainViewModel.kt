@@ -31,6 +31,8 @@ data class MainUiState(
     val isLoading: Boolean = false,
     val loadingModelId: String? = null,
     val loadingModelName: String? = null,
+    val unloadingModelId: String? = null,
+    val unloadingModelName: String? = null,
     val downloadingModelId: String? = null,
     val downloadProgress: Float = 0f,
     val errorMessage: String? = null,
@@ -79,6 +81,21 @@ class MainViewModel(
         chatViewModel.setModelStateChangeCallback {
             modelManagementViewModel.refreshModels()
         }
+        
+        // Set up callback for download model state changes
+        modelDownloadViewModel.setModelStateChangeCallback {
+            modelManagementViewModel.refreshModels()
+        }
+        
+        // Set up callback for model management changes (add/delete) to force UI refresh
+        modelManagementViewModel.setModelStateChangeCallback {
+            // Force a refresh of the combined state by triggering state flow updates
+            viewModelScope.launch(Dispatchers.Main) {
+                kotlinx.coroutines.delay(50) // Small delay to ensure all state updates complete
+                // Force recomposition by updating a timestamp or trigger
+                _uiState.value = _uiState.value.copy()
+            }
+        }
     }
     
     private fun combineViewModelStates() {
@@ -101,6 +118,8 @@ class MainViewModel(
                     isLoading = modelMgmt.isLoading || server.isLoading || chat.isLoadingModel,
                     loadingModelId = modelMgmt.loadingModelId ?: chat.loadingModelId,
                     loadingModelName = modelMgmt.loadingModelName ?: chat.loadingModelName,
+                    unloadingModelId = modelMgmt.unloadingModelId,
+                    unloadingModelName = modelMgmt.unloadingModelName,
                     downloadingModelId = download.downloadingModelId,
                     downloadProgress = download.downloadProgress,
                     errorMessage = modelMgmt.errorMessage ?: download.errorMessage ?: chat.errorMessage ?: server.errorMessage,

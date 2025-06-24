@@ -18,6 +18,13 @@ class ModelDownloadViewModel(
     private val _uiState = MutableStateFlow(ModelDownloadUiState())
     val uiState: StateFlow<ModelDownloadUiState> = _uiState.asStateFlow()
     
+    // Callback for when models are downloaded successfully
+    private var modelStateChangeCallback: (() -> Unit)? = null
+    
+    fun setModelStateChangeCallback(callback: () -> Unit) {
+        modelStateChangeCallback = callback
+    }
+    
     init {
         // Initialize authentication check immediately (lightweight)
         checkHuggingFaceAuthentication()
@@ -80,6 +87,11 @@ class ModelDownloadViewModel(
                                 downloadingModelId = null,
                                 downloadProgress = 0f
                             )
+                        }
+                        // Trigger callback to refresh models list on main thread with small delay
+                        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            kotlinx.coroutines.delay(100) // Small delay to ensure UI is ready
+                            modelStateChangeCallback?.invoke()
                         }
                     },
                     onFailure = { error ->
@@ -175,6 +187,11 @@ class ModelDownloadViewModel(
                                 customUrlInput = "",
                                 downloadProgress = 0f
                             )
+                        }
+                        // Trigger callback to refresh models list on main thread with small delay
+                        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            kotlinx.coroutines.delay(100) // Small delay to ensure UI is ready
+                            modelStateChangeCallback?.invoke()
                         }
                     },
                     onFailure = { error ->

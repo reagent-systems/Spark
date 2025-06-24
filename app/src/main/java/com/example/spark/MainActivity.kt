@@ -216,6 +216,7 @@ fun SparkApp(
                         downloadableModels = uiState.downloadableModels,
                         isLoading = uiState.isLoading,
                         loadingModelId = uiState.loadingModelId,
+                        unloadingModelId = uiState.unloadingModelId,
                         downloadingModelId = uiState.downloadingModelId,
                         downloadProgress = uiState.downloadProgress,
                         onLoadModel = viewModel::loadModel,

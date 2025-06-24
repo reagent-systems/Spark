@@ -14,6 +14,13 @@ class ModelManagementViewModel(
     private val _uiState = MutableStateFlow(ModelManagementUiState())
     val uiState: StateFlow<ModelManagementUiState> = _uiState.asStateFlow()
     
+    // Callback for when models are added or deleted
+    private var modelStateChangeCallback: (() -> Unit)? = null
+    
+    fun setModelStateChangeCallback(callback: () -> Unit) {
+        modelStateChangeCallback = callback
+    }
+    
     init {
         loadModels()
     }
@@ -98,8 +105,8 @@ class ModelManagementViewModel(
             
             _uiState.update { 
                 it.copy(
-                    loadingModelId = modelId,
-                    loadingModelName = modelName
+                    unloadingModelId = modelId,
+                    unloadingModelName = modelName
                 )
             }
             
@@ -113,16 +120,16 @@ class ModelManagementViewModel(
                             it.copy(
                                 availableModels = availableModels,
                                 loadedModels = loadedModels,
-                                loadingModelId = null,
-                                loadingModelName = null
+                                unloadingModelId = null,
+                                unloadingModelName = null
                             )
                         }
                     },
                     onFailure = { error ->
                         _uiState.update {
                             it.copy(
-                                loadingModelId = null,
-                                loadingModelName = null,
+                                unloadingModelId = null,
+                                unloadingModelName = null,
                                 errorMessage = "Failed to unload model: ${error.message}"
                             )
                         }
@@ -131,8 +138,8 @@ class ModelManagementViewModel(
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
-                        loadingModelId = null,
-                        loadingModelName = null,
+                        unloadingModelId = null,
+                        unloadingModelName = null,
                         errorMessage = "Error unloading model: ${e.message}"
                     )
                 }
@@ -153,6 +160,11 @@ class ModelManagementViewModel(
                                 availableModels = models,
                                 isLoading = false
                             )
+                        }
+                        // Trigger callback to notify download view
+                        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            kotlinx.coroutines.delay(100)
+                            modelStateChangeCallback?.invoke()
                         }
                     },
                     onFailure = { error ->
@@ -211,6 +223,11 @@ class ModelManagementViewModel(
                                     loadingModelId = null
                                 )
                             }
+                            // Trigger callback to notify download view
+                            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                                kotlinx.coroutines.delay(100)
+                                modelStateChangeCallback?.invoke()
+                            }
                         },
                         onFailure = { error ->
                             _uiState.update {
@@ -257,6 +274,8 @@ data class ModelManagementUiState(
     val isLoading: Boolean = false,
     val loadingModelId: String? = null,
     val loadingModelName: String? = null,
+    val unloadingModelId: String? = null,
+    val unloadingModelName: String? = null,
     val errorMessage: String? = null,
     val showDeleteConfirmationDialog: Boolean = false,
     val modelToDelete: LLMModel? = null

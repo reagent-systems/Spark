@@ -20,6 +20,7 @@ import com.example.spark.domain.models.LLMModel
 fun ModelCard(
     model: LLMModel,
     isLoading: Boolean = false,
+    isUnloading: Boolean = false,
     onLoadClick: () -> Unit,
     onUnloadClick: () -> Unit,
     onDeleteClick: () -> Unit,
@@ -67,7 +68,7 @@ fun ModelCard(
                 // Status indicator
                 Surface(
                     color = when {
-                        isLoading -> MaterialTheme.colorScheme.secondary
+                        isLoading || isUnloading -> MaterialTheme.colorScheme.secondary
                         model.isLoaded -> MaterialTheme.colorScheme.primaryContainer
                         else -> MaterialTheme.colorScheme.surfaceVariant
                     },
@@ -78,7 +79,7 @@ fun ModelCard(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        if (isLoading) {
+                        if (isLoading || isUnloading) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(12.dp),
                                 strokeWidth = 2.dp,
@@ -89,12 +90,13 @@ fun ModelCard(
                         Text(
                             text = when {
                                 isLoading -> "Loading..."
+                                isUnloading -> "Unloading..."
                                 model.isLoaded -> "Loaded"
                                 else -> "Available"
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = when {
-                                isLoading -> MaterialTheme.colorScheme.onSecondary
+                                isLoading || isUnloading -> MaterialTheme.colorScheme.onSecondary
                                 model.isLoaded -> MaterialTheme.colorScheme.onPrimaryContainer
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             }
@@ -113,18 +115,27 @@ fun ModelCard(
                 if (model.isLoaded) {
                     Button(
                         onClick = onUnloadClick,
+                        enabled = !isUnloading,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error
                         ),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(
-                            Icons.Default.Stop,
-                            contentDescription = "Unload",
-                            modifier = Modifier.size(16.dp)
-                        )
+                        if (isUnloading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onError
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.Stop,
+                                contentDescription = "Unload",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Unload")
+                        Text(if (isUnloading) "Unloading..." else "Unload")
                     }
                 } else {
                     Button(

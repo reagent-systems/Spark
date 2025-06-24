@@ -33,6 +33,7 @@ fun ModelsScreen(
     downloadableModels: List<AvailableModel> = emptyList(),
     isLoading: Boolean,
     loadingModelId: String? = null,
+    unloadingModelId: String? = null,
     downloadingModelId: String? = null,
     downloadProgress: Float = 0f,
     onLoadModel: (String) -> Unit,
@@ -209,11 +210,15 @@ fun ModelsScreen(
                             val isModelLoading = remember(loadingModelId, model.id) {
                                 loadingModelId == model.id
                             }
+                            val isModelUnloading = remember(unloadingModelId, model.id) {
+                                unloadingModelId == model.id
+                            }
                             
-                            key("local_${model.id}_${isModelLoading}_${model.isLoaded}_${model.hashCode()}") {
+                            key("local_${model.id}_${isModelLoading}_${isModelUnloading}_${model.isLoaded}_${model.hashCode()}") {
                                 ModelCard(
                                     model = model,
                                     isLoading = isModelLoading,
+                                    isUnloading = isModelUnloading,
                                     onLoadClick = { onLoadModel(model.id) },
                                     onUnloadClick = { onUnloadModel(model.id) },
                                     onDeleteClick = { onDeleteModel(model.id) }
@@ -264,7 +269,12 @@ fun ModelsScreen(
                                 val isDownloadingThis = remember(downloadingModelId, availableModel.id) {
                                     downloadingModelId == availableModel.id
                                 }
-                                val isAlreadyDownloaded = remember(models.size, availableModel.id, models.hashCode()) {
+                                val isAlreadyDownloaded = remember(
+                                    models.size, 
+                                    availableModel.id, 
+                                    models.hashCode(),
+                                    models.map { it.id }.sorted().hashCode() // More specific key for model IDs
+                                ) {
                                     models.any { it.id == availableModel.id }
                                 }
                                 val currentProgress = remember(downloadProgress, isDownloadingThis) {
