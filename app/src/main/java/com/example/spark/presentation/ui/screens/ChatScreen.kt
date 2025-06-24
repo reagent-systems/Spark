@@ -30,6 +30,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.example.spark.domain.models.ChatSession
 import com.example.spark.domain.models.LLMModel
@@ -757,16 +759,33 @@ fun ModelConfigDialog(
     var randomSeed by remember { mutableStateOf(currentConfig.randomSeed.toString()) }
     var useGpu by remember { mutableStateOf(currentConfig.useGpu) }
     
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text("Model Configuration")
-        },
-        text = {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // Header
+                Text(
+                    text = "Model Configuration",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
                 // Max Tokens
                 OutlinedTextField(
                     value = maxTokens,
@@ -899,33 +918,42 @@ fun ModelConfigDialog(
                         Text("Creative", style = MaterialTheme.typography.bodySmall)
                     }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    try {
-                        val newConfig = ModelConfig(
-                            maxTokens = maxTokens.toIntOrNull()?.coerceIn(100, 4000) ?: currentConfig.maxTokens,
-                            temperature = temperature.toFloatOrNull()?.coerceIn(0.0f, 2.0f) ?: currentConfig.temperature,
-                            topK = topK.toIntOrNull()?.coerceIn(1, 100) ?: currentConfig.topK,
-                            randomSeed = randomSeed.toIntOrNull() ?: currentConfig.randomSeed,
-                            useGpu = useGpu
-                        )
-                        onConfigUpdate(newConfig)
-                    } catch (e: Exception) {
-                        // Handle invalid input gracefully
-                        onConfigUpdate(currentConfig)
+                }
+                
+                // Action buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel")
+                    }
+                    
+                    Button(
+                        onClick = {
+                            try {
+                                val newConfig = ModelConfig(
+                                    maxTokens = maxTokens.toIntOrNull()?.coerceIn(100, 4000) ?: currentConfig.maxTokens,
+                                    temperature = temperature.toFloatOrNull()?.coerceIn(0.0f, 2.0f) ?: currentConfig.temperature,
+                                    topK = topK.toIntOrNull()?.coerceIn(1, 100) ?: currentConfig.topK,
+                                    randomSeed = randomSeed.toIntOrNull() ?: currentConfig.randomSeed,
+                                    useGpu = useGpu
+                                )
+                                onConfigUpdate(newConfig)
+                            } catch (e: Exception) {
+                                // Handle invalid input gracefully
+                                onConfigUpdate(currentConfig)
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Apply")
                     }
                 }
-            ) {
-                Text("Apply")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
             }
         }
-    )
+    }
 } 

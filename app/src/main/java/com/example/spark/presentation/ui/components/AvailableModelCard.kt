@@ -1,8 +1,6 @@
 package com.example.spark.presentation.ui.components
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -13,6 +11,7 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,6 +33,22 @@ fun AvailableModelCard(
     onCancelDownload: (AvailableModel) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    // Pre-calculate expensive values to avoid recomposition
+    val containerColor = remember(model.isRecommended) {
+        if (model.isRecommended) 
+            Color.Transparent // Will be calculated with MaterialTheme later
+        else 
+            Color.Transparent // Will be calculated with MaterialTheme later
+    }
+    
+    val contextLengthText = remember(model.contextLength) {
+        "${if (model.contextLength >= 1000) "${model.contextLength/1000}k" else model.contextLength} ctx"
+    }
+    
+    val displayedTags = remember(model.tags) {
+        model.tags.take(3)
+    }
+    
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -157,7 +172,7 @@ fun AvailableModelCard(
                     onClick = { },
                     label = { 
                         Text(
-                            "${if (model.contextLength >= 1000) "${model.contextLength/1000}k" else model.contextLength} ctx",
+                            contextLengthText,
                             fontSize = 11.sp
                         ) 
                     },
@@ -184,13 +199,14 @@ fun AvailableModelCard(
                 }
             }
 
-            // Tags
-            if (model.tags.isNotEmpty()) {
+            // Tags - Replace LazyRow with simple Row for better performance
+            if (displayedTags.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(model.tags.take(3)) { tag ->
+                    displayedTags.forEach { tag ->
                         AssistChip(
                             onClick = { },
                             label = { 

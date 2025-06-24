@@ -199,7 +199,10 @@ fun ModelsScreen(
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(models) { model ->
+                        items(
+                            items = models,
+                            key = { it.id }
+                        ) { model ->
                             ModelCard(
                                 model = model,
                                 isLoading = loadingModelId == model.id,
@@ -241,12 +244,23 @@ fun ModelsScreen(
                         LazyColumn(
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(downloadableModels) { availableModel ->
+                            items(
+                                items = downloadableModels,
+                                key = { it.id }
+                            ) { availableModel ->
+                                // Pre-calculate expensive checks
+                                val isDownloadingThis = downloadingModelId == availableModel.id
+                                val isAlreadyDownloaded by remember {
+                                    derivedStateOf {
+                                        models.any { it.id == availableModel.id }
+                                    }
+                                }
+                                
                                 AvailableModelCard(
                                     model = availableModel,
-                                    isDownloading = downloadingModelId == availableModel.id,
-                                    downloadProgress = if (downloadingModelId == availableModel.id) downloadProgress else 0f,
-                                    isAlreadyDownloaded = models.any { it.id == availableModel.id },
+                                    isDownloading = isDownloadingThis,
+                                    downloadProgress = if (isDownloadingThis) downloadProgress else 0f,
+                                    isAlreadyDownloaded = isAlreadyDownloaded,
                                     onDownload = onDownloadModel,
                                     onCancelDownload = onCancelDownload
                                 )
