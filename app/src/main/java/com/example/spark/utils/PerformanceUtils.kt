@@ -1,6 +1,7 @@
 package com.example.spark.utils
 
 import android.util.Log
+import androidx.compose.runtime.*
 
 object PerformanceUtils {
     
@@ -28,5 +29,17 @@ object PerformanceUtils {
         val endTime = System.currentTimeMillis()
         Log.d(tag, "$operation took ${endTime - startTime}ms")
         return result
+    }
+    
+    // Composable performance tracker
+    @Composable
+    fun TrackComposition(name: String) {
+        val recompositionCount = remember { mutableIntStateOf(0) }
+        SideEffect {
+            recompositionCount.intValue++
+            if (recompositionCount.intValue > 5) {
+                Log.w("Composition", "$name recomposed ${recompositionCount.intValue} times")
+            }
+        }
     }
 } 

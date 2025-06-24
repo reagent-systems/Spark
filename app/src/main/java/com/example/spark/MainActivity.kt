@@ -84,9 +84,10 @@ fun SparkApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     
-    // Handle errors
-    uiState.errorMessage?.let { error ->
-        LaunchedEffect(error) {
+    // Handle errors with debouncing to prevent excessive recompositions
+    val errorMessage = uiState.errorMessage
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let { error ->
             snackbarHostState.showSnackbar(
                 message = error,
                 duration = SnackbarDuration.Long
@@ -100,7 +101,7 @@ fun SparkApp(
         bottomBar = {
             NavigationBar {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentDestination = navBackStackEntry?.destination
+                val currentRoute = navBackStackEntry?.destination?.route
                 
                 val items = remember {
                     listOf(
@@ -114,14 +115,16 @@ fun SparkApp(
                     NavigationBarItem(
                         icon = { Icon(item.icon, contentDescription = item.title) },
                         label = { Text(item.title) },
-                        selected = currentDestination?.hierarchy?.any { it.route == item.route } == true,
+                        selected = currentRoute == item.route,
                         onClick = {
-                            navController.navigate(item.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
+                            if (currentRoute != item.route) {
+                                navController.navigate(item.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
                                 }
-                                launchSingleTop = true
-                                restoreState = true
                             }
                         }
                     )
@@ -130,18 +133,22 @@ fun SparkApp(
         }
     ) { innerPadding ->
         // Model Loading Dialog
-        ModelLoadingDialog(
-            modelName = uiState.loadingModelName ?: "",
-            isVisible = uiState.loadingModelId != null
-        )
+        if (uiState.loadingModelId != null) {
+            ModelLoadingDialog(
+                modelName = uiState.loadingModelName ?: "",
+                isVisible = true
+            )
+        }
         
         // HuggingFace Token Dialog
-        HuggingFaceTokenDialog(
-            isVisible = uiState.showHuggingFaceTokenDialog,
-            onDismiss = viewModel::hideHuggingFaceTokenDialog,
-            onTokenSubmit = viewModel::submitHuggingFaceToken,
-            onOpenTokenPage = { onOpenUrl("https://huggingface.co/settings/tokens") }
-        )
+        if (uiState.showHuggingFaceTokenDialog) {
+            HuggingFaceTokenDialog(
+                isVisible = true,
+                onDismiss = viewModel::hideHuggingFaceTokenDialog,
+                onTokenSubmit = viewModel::submitHuggingFaceToken,
+                onOpenTokenPage = { onOpenUrl("https://huggingface.co/settings/tokens") }
+            )
+        }
 
         // HuggingFace Settings Dialog
         if (uiState.showHuggingFaceSettingsDialog) {
@@ -168,68 +175,80 @@ fun SparkApp(
         }
 
         // Delete Model Confirmation Dialog
-        DeleteModelConfirmationDialog(
-            isVisible = uiState.showDeleteConfirmationDialog,
-            modelName = uiState.modelToDelete?.name ?: "",
-            onDismiss = viewModel::cancelDeleteModel,
-            onConfirm = viewModel::confirmDeleteModel
-        )
+        if (uiState.showDeleteConfirmationDialog) {
+            DeleteModelConfirmationDialog(
+                isVisible = true,
+                modelName = uiState.modelToDelete?.name ?: "",
+                onDismiss = viewModel::cancelDeleteModel,
+                onConfirm = viewModel::confirmDeleteModel
+            )
+        }
+        
         NavHost(
             navController = navController,
             startDestination = "models",
-                        modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.padding(innerPadding)
         ) {
-            composable("models") {
-                ModelsScreen(
-                    models = uiState.availableModels,
-                    downloadableModels = uiState.downloadableModels,
-                    isLoading = uiState.isLoading,
-                    loadingModelId = uiState.loadingModelId,
-                    downloadingModelId = uiState.downloadingModelId,
-                    downloadProgress = uiState.downloadProgress,
-                    onLoadModel = viewModel::loadModel,
-                    onUnloadModel = viewModel::unloadModel,
-                    onAddModel = viewModel::addModel,
-                    onDeleteModel = viewModel::deleteModel,
-                    onDownloadModel = viewModel::downloadModel,
-                    onCancelDownload = viewModel::cancelDownload,
-                    onShowHuggingFaceSettings = viewModel::showHuggingFaceSettingsDialog,
-                    onShowCustomUrlDialog = viewModel::showCustomUrlDialog
-                )
-            }
+            composable(
+                route = "models",
+                content = {
+                    ModelsScreen(
+                        models = uiState.availableModels,
+                        downloadableModels = uiState.downloadableModels,
+                        isLoading = uiState.isLoading,
+                        loadingModelId = uiState.loadingModelId,
+                        downloadingModelId = uiState.downloadingModelId,
+                        downloadProgress = uiState.downloadProgress,
+                        onLoadModel = viewModel::loadModel,
+                        onUnloadModel = viewModel::unloadModel,
+                        onAddModel = viewModel::addModel,
+                        onDeleteModel = viewModel::deleteModel,
+                        onDownloadModel = viewModel::downloadModel,
+                        onCancelDownload = viewModel::cancelDownload,
+                        onShowHuggingFaceSettings = viewModel::showHuggingFaceSettingsDialog,
+                        onShowCustomUrlDialog = viewModel::showCustomUrlDialog
+                    )
+                }
+            )
             
-            composable("chat") {
-                ChatScreen(
-                    chatSessions = uiState.chatSessions,
-                    currentChatSession = uiState.currentChatSession,
-                    loadedModels = uiState.loadedModels,
-                    availableModels = uiState.availableModels,
-                    currentMessage = uiState.currentMessage,
-                    isGenerating = uiState.isGenerating,
-                    modelConfig = uiState.modelConfig,
-                    onCreateChatSession = viewModel::createChatSession,
-                    onSelectChatSession = viewModel::selectChatSession,
-                    onSendMessage = viewModel::sendMessage,
-                    onUpdateCurrentMessage = viewModel::updateCurrentMessage,
-                    onLoadModel = viewModel::loadModel,
-                    onDeleteChatSession = viewModel::deleteChatSession,
-                    onStopGeneration = viewModel::stopGeneration,
-                    onUpdateModelConfig = viewModel::updateModelConfig
-                )
-            }
+            composable(
+                route = "chat",
+                content = {
+                    ChatScreen(
+                        chatSessions = uiState.chatSessions,
+                        currentChatSession = uiState.currentChatSession,
+                        loadedModels = uiState.loadedModels,
+                        availableModels = uiState.availableModels,
+                        currentMessage = uiState.currentMessage,
+                        isGenerating = uiState.isGenerating,
+                        modelConfig = uiState.modelConfig,
+                        onCreateChatSession = viewModel::createChatSession,
+                        onSelectChatSession = viewModel::selectChatSession,
+                        onSendMessage = viewModel::sendMessage,
+                        onUpdateCurrentMessage = viewModel::updateCurrentMessage,
+                        onLoadModel = viewModel::loadModel,
+                        onDeleteChatSession = viewModel::deleteChatSession,
+                        onStopGeneration = viewModel::stopGeneration,
+                        onUpdateModelConfig = viewModel::updateModelConfig
+                    )
+                }
+            )
             
-            composable("server") {
-                ServerScreen(
-                    isServerRunning = uiState.isServerRunning,
-                    serverPort = uiState.serverPort,
-                    serverLocalIp = uiState.serverLocalIp,
-                    loadedModels = uiState.loadedModels,
-                    modelConfig = uiState.modelConfig,
-                    onStartServer = viewModel::startServer,
-                    onStopServer = viewModel::stopServer,
-                    onUpdateModelConfig = viewModel::updateModelConfig
-                )
-            }
+            composable(
+                route = "server",
+                content = {
+                    ServerScreen(
+                        isServerRunning = uiState.isServerRunning,
+                        serverPort = uiState.serverPort,
+                        serverLocalIp = uiState.serverLocalIp,
+                        loadedModels = uiState.loadedModels,
+                        modelConfig = uiState.modelConfig,
+                        onStartServer = viewModel::startServer,
+                        onStopServer = viewModel::stopServer,
+                        onUpdateModelConfig = viewModel::updateModelConfig
+                    )
+                }
+            )
         }
     }
 }

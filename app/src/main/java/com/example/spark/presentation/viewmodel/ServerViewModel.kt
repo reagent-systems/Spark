@@ -8,6 +8,8 @@ import com.example.spark.network.server.ApiServer
 import com.example.spark.utils.NetworkUtils
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import android.content.Context
@@ -28,7 +30,7 @@ class ServerViewModel(
     val uiState: StateFlow<ServerUiState> = _uiState.asStateFlow()
     
     init {
-        loadModelConfig()
+        loadModelConfigAsync()
         updateServerStatus()
     }
     
@@ -81,41 +83,48 @@ class ServerViewModel(
     
     fun updateModelConfig(newConfig: ModelConfig) {
         _uiState.update { it.copy(modelConfig = newConfig) }
-        saveModelConfig(newConfig)
+        saveModelConfigAsync(newConfig)
         
         // Update the API server's default config
         apiServer.updateDefaultModelConfig(newConfig)
     }
     
-    private fun loadModelConfig() {
-        try {
-            val configFile = File(context.filesDir, "model_config.json")
-            if (configFile.exists()) {
-                val configJson = configFile.readText()
-                val config = json.decodeFromString<ModelConfig>(configJson)
-                _uiState.update { it.copy(modelConfig = config) }
+    private fun loadModelConfigAsync() {
+        viewModelScope.launch {
+            try {
+                val config = withContext(Dispatchers.IO) {
+                    val configFile = File(context.filesDir, "model_config.json")
+                    if (configFile.exists()) {
+                        val configJson = configFile.readText()
+                        json.decodeFromString<ModelConfig>(configJson)
+                    } else {
+                        ModelConfig() // Default config
+                    }
+                }
                 
+                _uiState.update { it.copy(modelConfig = config) }
                 // Initialize API server with the loaded config
                 apiServer.updateDefaultModelConfig(config)
-            } else {
-                // Initialize API server with default config
-                apiServer.updateDefaultModelConfig(ModelConfig())
+            } catch (e: Exception) {
+                // If loading fails, use default config
+                val defaultConfig = ModelConfig()
+                _uiState.update { it.copy(modelConfig = defaultConfig) }
+                apiServer.updateDefaultModelConfig(defaultConfig)
             }
-        } catch (e: Exception) {
-            // If loading fails, use default config
-            val defaultConfig = ModelConfig()
-            _uiState.update { it.copy(modelConfig = defaultConfig) }
-            apiServer.updateDefaultModelConfig(defaultConfig)
         }
     }
     
-    private fun saveModelConfig(config: ModelConfig) {
-        try {
-            val configFile = File(context.filesDir, "model_config.json")
-            val jsonString = json.encodeToString(config)
-            configFile.writeText(jsonString)
-        } catch (e: Exception) {
-            // Handle save error silently
+    private fun saveModelConfigAsync(config: ModelConfig) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val configFile = File(context.filesDir, "model_config.json")
+                    val jsonString = json.encodeToString(config)
+                    configFile.writeText(jsonString)
+                }
+            } catch (e: Exception) {
+                // Handle save error silently
+            }
         }
     }
     

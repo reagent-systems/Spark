@@ -84,24 +84,7 @@ fun ChatScreen(
     ) {
         // Main Chat Area
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            // Handle swipe gestures
-                        }
-                    ) { _, dragAmount ->
-                        // Open drawer on right swipe from left edge
-                        if (dragAmount > 50 && !isDrawerOpen) {
-                            isDrawerOpen = true
-                        }
-                        // Close drawer on left swipe when open
-                        else if (dragAmount < -50 && isDrawerOpen) {
-                            isDrawerOpen = false
-                        }
-                    }
-                }
+            modifier = Modifier.fillMaxSize()
         ) {
             // Top App Bar with Hamburger Menu
             TopAppBar(
