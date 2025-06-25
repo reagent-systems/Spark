@@ -417,6 +417,165 @@ class ChatViewModel(
     fun refreshChatSessions() {
         loadChatSessions()
     }
+    
+    fun editMessage(messageId: String, newContent: String) {
+        val currentSession = _uiState.value.currentChatSession ?: return
+        val currentConfig = _uiState.value.modelConfig
+        
+        viewModelScope.launch {
+            try {
+                // Find the message index
+                val messageIndex = currentSession.messages.indexOfFirst { it.id == messageId }
+                if (messageIndex == -1) return@launch
+                
+                // Create edited message
+                val originalMessage = currentSession.messages[messageIndex]
+                val editedMessage = originalMessage.copy(
+                    content = newContent,
+                    isEdited = true,
+                    editedTimestamp = System.currentTimeMillis(),
+                    originalContent = originalMessage.content
+                )
+                
+                // Create new message list with messages up to and including the edited message
+                val newMessages = currentSession.messages.take(messageIndex + 1).toMutableList()
+                newMessages[messageIndex] = editedMessage
+                
+                // Update session with new messages
+                val updatedSession = currentSession.copy(
+                    messages = newMessages,
+                    updatedAt = System.currentTimeMillis()
+                )
+                
+                // Update repository and UI state
+                llmRepository.updateChatSession(updatedSession)
+                _uiState.update { it.copy(
+                    currentChatSession = updatedSession,
+                    currentMessage = "" // Clear input field
+                ) }
+                
+                // If this was a user message, automatically trigger a new response
+                if (editedMessage.isUser) {
+                    // Don't send a new message, just trigger the response
+                    val fullPrompt = buildPrompt(
+                        systemPrompt = currentConfig.systemPrompt.ifBlank { currentSession.systemPrompt },
+                        conversationHistory = newMessages,
+                        currentMessage = "" // No new message needed
+                    )
+                    
+                    _uiState.update { it.copy(isGenerating = true) }
+                    
+                    try {
+                        if (currentConfig.enableStreaming) {
+                            // Handle streaming response
+                            val aiMessageId = UUID.randomUUID().toString()
+                            
+                            _uiState.update {
+                                it.copy(
+                                    streamingMessageId = aiMessageId,
+                                    streamingContent = ""
+                                )
+                            }
+                            
+                            var finalAccumulatedContent = ""
+                            
+                            llmRepository.generateResponse(
+                                currentSession.modelId,
+                                fullPrompt,
+                                currentConfig
+                            ).collect { cumulativeResponse ->
+                                finalAccumulatedContent = cumulativeResponse
+                                _uiState.update { currentState ->
+                                    currentState.copy(streamingContent = cumulativeResponse)
+                                }
+                            }
+                            
+                            // After streaming completes, add the AI message
+                            val aiMessage = ChatMessage(
+                                id = aiMessageId,
+                                content = finalAccumulatedContent,
+                                isUser = false,
+                                timestamp = System.currentTimeMillis(),
+                                modelId = currentSession.modelId
+                            )
+                            
+                            val finalMessages = newMessages.toMutableList()
+                            finalMessages.add(aiMessage)
+                            
+                            val finalSession = currentSession.copy(
+                                messages = finalMessages,
+                                updatedAt = System.currentTimeMillis()
+                            )
+                            
+                            llmRepository.updateChatSession(finalSession)
+                            
+                            _uiState.update {
+                                it.copy(
+                                    currentChatSession = finalSession,
+                                    streamingMessageId = null,
+                                    streamingContent = "",
+                                    isGenerating = false
+                                )
+                            }
+                        } else {
+                            // Handle non-streaming response
+                            val response = llmRepository.generateResponse(
+                                currentSession.modelId,
+                                fullPrompt,
+                                currentConfig
+                            ).first()
+                            
+                            val aiMessage = ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                content = response,
+                                isUser = false,
+                                timestamp = System.currentTimeMillis(),
+                                modelId = currentSession.modelId
+                            )
+                            
+                            val finalMessages = newMessages.toMutableList()
+                            finalMessages.add(aiMessage)
+                            
+                            val finalSession = currentSession.copy(
+                                messages = finalMessages,
+                                updatedAt = System.currentTimeMillis()
+                            )
+                            
+                            llmRepository.updateChatSession(finalSession)
+                            
+                            _uiState.update {
+                                it.copy(
+                                    currentChatSession = finalSession,
+                                    isGenerating = false
+                                )
+                            }
+                        }
+                    } catch (e: Exception) {
+                        _uiState.update {
+                            it.copy(
+                                isGenerating = false,
+                                streamingMessageId = null,
+                                streamingContent = "",
+                                errorMessage = if (e is kotlinx.coroutines.CancellationException) {
+                                    null
+                                } else {
+                                    "Error generating response: ${e.message}"
+                                }
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(errorMessage = "Error editing message: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    fun cancelEdit(messageId: String) {
+        // No state changes needed for cancel, just UI reset
+    }
 }
 
 data class ChatUiState(
@@ -429,5 +588,6 @@ data class ChatUiState(
     val loadingModelName: String? = null,
     val errorMessage: String? = null,
     val streamingMessageId: String? = null,
-    val streamingContent: String = ""
+    val streamingContent: String = "",
+    val modelConfig: ModelConfig = ModelConfig()
 ) 

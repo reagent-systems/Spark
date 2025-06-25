@@ -297,7 +297,10 @@ fun SparkApp(
                         onDeleteChatSession = viewModel::deleteChatSession,
                         onStopGeneration = viewModel::stopGeneration,
                         onUpdateModelConfig = viewModel::updateModelConfig,
-                        onUpdateChatSession = viewModel::updateChatSession
+                        onUpdateChatSession = viewModel::updateChatSession,
+                        onEditMessage = viewModel::editMessage,
+                        onCancelEdit = viewModel::cancelEdit,
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
             )

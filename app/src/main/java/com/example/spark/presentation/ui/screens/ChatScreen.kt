@@ -3,6 +3,7 @@ package com.example.spark.presentation.ui.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
@@ -16,6 +17,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -61,6 +63,8 @@ fun ChatScreen(
     onStopGeneration: () -> Unit,
     onUpdateModelConfig: (ModelConfig) -> Unit,
     onUpdateChatSession: (ChatSession) -> Unit,
+    onEditMessage: (String, String) -> Unit,
+    onCancelEdit: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showNewChatDialog by remember { mutableStateOf(false) }
@@ -190,7 +194,9 @@ fun ChatScreen(
                         onUpdateCurrentMessage(newText)
                     },
                     onSendMessage = onSendMessage,
-                    onStopGeneration = onStopGeneration
+                    onStopGeneration = onStopGeneration,
+                    onEditMessage = onEditMessage,
+                    onCancelEdit = onCancelEdit
                 )
             }
         }
@@ -495,19 +501,20 @@ private fun EmptyChatState(
 @Composable
 private fun ChatContent(
     currentChatSession: ChatSession,
-    listState: androidx.compose.foundation.lazy.LazyListState,
+    listState: LazyListState,
     streamingMessageId: String?,
     streamingContent: String,
     isGenerating: Boolean,
     localTextInput: String,
     onTextInputChange: (String) -> Unit,
     onSendMessage: (String) -> Unit,
-    onStopGeneration: () -> Unit
+    onStopGeneration: () -> Unit,
+    onEditMessage: (String, String) -> Unit,
+    onCancelEdit: (String) -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
-        // Messages
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -520,23 +527,20 @@ private fun ChatContent(
             currentChatSession.messages.let { messages ->
                 items(
                     items = messages,
-                    key = { message -> "${message.id}_${message.timestamp}" },
+                    key = { message -> "msg_${message.id}_${message.content.hashCode()}_${message.isUser}" },
                     contentType = { message -> if (message.isUser) "UserMessage" else "AIMessage" }
                 ) { message ->
-                    key("msg_${message.id}_${message.content.hashCode()}_${message.isUser}") {
-                        ChatBubble(
-                            message = message,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                    ChatBubble(
+                        message = message,
+                        onEditMessage = onEditMessage,
+                        onCancelEdit = onCancelEdit,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
             
             // Show streaming message when streaming is active
             if (streamingMessageId != null && streamingContent.isNotEmpty()) {
-                // Debug logging for streaming display
-                android.util.Log.d("ChatScreen", "Displaying streaming content: length=${streamingContent.length}, id=$streamingMessageId")
-                
                 item(key = "streaming_message_$streamingMessageId", contentType = "StreamingMessage") {
                     StreamingMessageBubble(streamingContent = streamingContent)
                 }
@@ -545,9 +549,7 @@ private fun ChatContent(
             // Show typing indicator when generating (non-streaming)
             if (isGenerating && streamingMessageId == null) {
                 item(key = "typing_indicator", contentType = "TypingIndicator") {
-                    key("typing_${isGenerating}") {
-                        TypingMessageBubble()
-                    }
+                    TypingMessageBubble()
                 }
             }
         }
@@ -709,7 +711,7 @@ private fun MessageInput(
                     }
                     else -> {
                         Icon(
-                            Icons.Default.Send,
+                            Icons.AutoMirrored.Filled.Send,
                             contentDescription = "Send",
                             tint = if (localTextInput.isBlank()) 
                                 MaterialTheme.colorScheme.onSurfaceVariant 

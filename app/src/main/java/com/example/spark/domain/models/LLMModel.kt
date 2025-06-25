@@ -38,7 +38,10 @@ data class ChatMessage(
     val content: String,
     val isUser: Boolean,
     val timestamp: Long,
-    val modelId: String? = null
+    val modelId: String? = null,
+    val isEdited: Boolean = false,
+    val editedTimestamp: Long? = null,
+    val originalContent: String? = null
 )
 
 @Serializable

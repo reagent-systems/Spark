@@ -324,4 +324,14 @@ class MainViewModel(
     fun showChangelogDialog() = updateViewModel.showChangelogDialog()
     fun hideChangelogDialog() = updateViewModel.hideChangelogDialog()
     fun dismissUpdateError() = updateViewModel.dismissError()
+    
+    fun editMessage(messageId: String, newContent: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            chatViewModel.editMessage(messageId, newContent)
+        }
+    }
+    
+    fun cancelEdit(messageId: String) {
+        chatViewModel.cancelEdit(messageId)
+    }
 } 
