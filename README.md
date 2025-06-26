@@ -2,6 +2,12 @@
 
 Spark turns your Android phone into a powerful AI chat companion by running Large Language Models directly on your device. Chat privately with no cloud dependencies, and even use it as a local API server for your applications.
 
+> ⚠️ **Early Development Notice**: Spark is in active development and things are moving fast! If you encounter any bugs or issues, please help us improve by:
+> - 🐛 [Opening an issue](https://github.com/reagent-systems/Spark/issues)
+> - 💬 Reporting it in our [Discord community](https://discord.reagent-systems.com/)
+> 
+> Your feedback is incredibly valuable in making Spark better for everyone!
+
 ## ✨ Features
 
 - 💬 **Private Chat**: Have conversations with AI models running 100% on your device
