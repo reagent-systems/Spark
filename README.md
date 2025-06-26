@@ -66,3 +66,5 @@ MIT License - see [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 Built with [MediaPipe](https://developers.google.com/mediapipe/solutions/genai/llm_inference/android), [Ktor](https://ktor.io/), and [Jetpack Compose](https://developer.android.com/jetpack/compose) 
+
+[Be sure to join the discord server!](https://discord.reagent-systems.com/)
