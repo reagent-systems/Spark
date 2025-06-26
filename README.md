@@ -19,7 +19,7 @@ Spark lets you run Large Language Models directly on your Android device, provid
 
 ## 🤖 Supported Models
 
-### Multimodal Models (Text + Vision)
+### Multimodal Models
 - **Gemma-3n-E2B-it** (3.0GB, INT4)
   - 4096 context length, requires 8GB RAM
   - Latest Google model with vision capabilities
