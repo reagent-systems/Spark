@@ -55,7 +55,7 @@ Spark turns your Android phone into a powerful AI chat companion by running Larg
 
 ## 🚀 Getting Started
 
-1. Install Spark from [Latest Release](https://github.com/your-username/spark/releases)
+1. Install Spark from [Latest Release](https://github.com/reagent-systems/spark/releases)
 2. Open app and go to Models tab
 3. Download a model (start with Gemma3-1B-IT for best compatibility)
 4. Create a new chat and start talking!

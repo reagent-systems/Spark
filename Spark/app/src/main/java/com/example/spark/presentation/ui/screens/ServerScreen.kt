@@ -30,6 +30,7 @@ fun ServerScreen(
     serverLocalIp: String = "",
     loadedModels: List<LLMModel>,
     modelConfig: ModelConfig,
+    isLoading: Boolean = false,
     onStartServer: () -> Unit,
     onStopServer: () -> Unit,
     onUpdateModelConfig: (ModelConfig) -> Unit,
@@ -78,13 +79,17 @@ fun ServerScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = if (isServerRunning) {
-                                if (serverLocalIp.isNotEmpty()) {
-                                    "Running on $serverLocalIp:$serverPort"
-                                } else {
-                                    "Running on port $serverPort"
+                            text = when {
+                                isLoading -> if (isServerRunning) "Stopping..." else "Starting..."
+                                isServerRunning -> {
+                                    if (serverLocalIp.isNotEmpty()) {
+                                        "Running on $serverLocalIp:$serverPort"
+                                    } else {
+                                        "Running on port $serverPort"
+                                    }
                                 }
-                            } else "Stopped",
+                                else -> "Stopped"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (isServerRunning) 
                                 MaterialTheme.colorScheme.onPrimaryContainer 
@@ -94,14 +99,22 @@ fun ServerScreen(
                     }
                     
                     // Status indicator
-                    Surface(
-                        color = if (isServerRunning) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.outline,
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        modifier = Modifier.size(12.dp)
-                    ) {}
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Surface(
+                            color = if (isServerRunning) 
+                                MaterialTheme.colorScheme.primary 
+                            else 
+                                MaterialTheme.colorScheme.outline,
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                            modifier = Modifier.size(12.dp)
+                        ) {}
+                    }
                 }
                 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -109,6 +122,7 @@ fun ServerScreen(
                 // Control button
                 Button(
                     onClick = if (isServerRunning) onStopServer else onStartServer,
+                    enabled = !isLoading,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isServerRunning) 
                             MaterialTheme.colorScheme.error 
@@ -117,13 +131,27 @@ fun ServerScreen(
                     ),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(
-                        if (isServerRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
-                        contentDescription = if (isServerRunning) "Stop Server" else "Start Server",
-                        modifier = Modifier.size(18.dp)
-                    )
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        Icon(
+                            if (isServerRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
+                            contentDescription = if (isServerRunning) "Stop Server" else "Start Server",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (isServerRunning) "Stop Server" else "Start Server")
+                    Text(
+                        when {
+                            isLoading -> if (isServerRunning) "Stopping..." else "Starting..."
+                            isServerRunning -> "Stop Server"
+                            else -> "Start Server"
+                        }
+                    )
                 }
             }
         }

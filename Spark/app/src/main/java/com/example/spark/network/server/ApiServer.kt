@@ -63,7 +63,7 @@ class ApiServer(
             try {
                 Log.d("ApiServer", "Starting API server on port $port")
                 
-                server = embeddedServer(Netty, port = port, host = "0.0.0.0") {
+                val serverInstance = embeddedServer(Netty, port = port, host = "0.0.0.0") {
                     install(ContentNegotiation) {
                         json(Json {
                             prettyPrint = true
@@ -292,7 +292,11 @@ class ApiServer(
                             }
                         }
                     }
-                }.start(wait = false)
+                }
+                
+                // Start the server and assign to server variable only after it's started
+                serverInstance.start(wait = false)
+                server = serverInstance
                 
                 Log.i("ApiServer", "API Server started on port $port")
             } catch (e: Exception) {
@@ -332,7 +336,12 @@ class ApiServer(
     }
     
     fun isRunning(): Boolean {
-        return server != null && !isStarting.get() && !isStopping.get()
+        val serverExists = server != null
+        val notStarting = !isStarting.get()
+        val notStopping = !isStopping.get()
+        val result = serverExists && notStarting && notStopping
+        Log.d("ApiServer", "isRunning check - server exists: $serverExists, not starting: $notStarting, not stopping: $notStopping, result: $result")
+        return result
     }
     
     fun getPort(): Int = port

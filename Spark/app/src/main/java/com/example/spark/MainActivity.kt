@@ -314,6 +314,7 @@ fun SparkApp(
                         serverLocalIp = uiState.serverLocalIp,
                         loadedModels = uiState.loadedModels,
                         modelConfig = uiState.modelConfig,
+                        isLoading = uiState.isLoading,
                         onStartServer = viewModel::startServer,
                         onStopServer = viewModel::stopServer,
                         onUpdateModelConfig = viewModel::updateModelConfig
