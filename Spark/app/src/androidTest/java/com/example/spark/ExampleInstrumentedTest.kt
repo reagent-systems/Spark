@@ -1,4 +1,4 @@
-package com.example.spark
+package com.reagent_systems.spark
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
